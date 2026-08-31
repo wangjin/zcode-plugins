@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Token 速度仪表盘</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --border: #21262d; --text: #e6edf3;
+    --dim: #8b949e; --accent: #58a6ff; --green: #3fb950; --orange: #d29922;
+    --red: #f85149; --purple: #bc8cff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 14px/1.5 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    min-height: 100vh; padding: 20px; max-width: 860px; margin: 0 auto;
+  }
+  header { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+  header h1 { font-size: 17px; font-weight: 600; }
+  .badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; background: var(--panel); color: var(--dim); border: 1px solid var(--border); }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: 1px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 640px) { .grid { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+  .label { color: var(--dim); font-size: 12px; margin-bottom: 6px; }
+  .big { font-size: 40px; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
+  .unit { font-size: 15px; color: var(--dim); font-weight: 400; margin-left: 4px; }
+  .sub { color: var(--dim); font-size: 12px; margin-top: 6px; }
+  .gen { color: var(--orange); font-weight: 600; }
+  .pulse { animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
+  .num { font-variant-numeric: tabular-nums; }
+  .hist { display: flex; align-items: flex-end; gap: 3px; height: 120px; margin-top: 10px; }
+  .bar { flex: 1; min-width: 4px; border-radius: 3px 3px 0 0; background: var(--accent); position: relative; transition: height .3s; }
+  .bar.lite { background: #6e7681; }
+  .bar.est { background: var(--orange); }
+  .bar:hover::after {
+    content: attr(data-tip); position: absolute; bottom: 100%; left: 50%;
+    transform: translateX(-50%); background: #000; color: #fff; padding: 3px 8px;
+    border-radius: 5px; font-size: 11px; white-space: nowrap; z-index: 2;
+  }
+  .legend { display: flex; gap: 14px; margin-top: 8px; color: var(--dim); font-size: 11px; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+  .row { display: flex; justify-content: space-between; align-items: baseline; padding: 4px 0; border-bottom: 1px dashed var(--border); }
+  .row:last-child { border-bottom: none; }
+  .empty { color: var(--dim); text-align: center; padding: 30px 10px; }
+  footer { margin-top: 14px; color: var(--dim); font-size: 11px; display: flex; gap: 12px; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+<header>
+  <h1>⚡ Token 速度仪表盘</h1>
+  <span class="badge" id="conn"><span class="dot" style="background:#f85149"></span>连接中…</span>
+  <span class="badge" id="src"></span>
+</header>
+
+<div class="grid">
+  <div class="panel">
+    <div class="label" id="heroLabel">最近一次请求</div>
+    <div class="big" id="heroNum">—<span class="unit">tok/s</span></div>
+    <div class="sub" id="heroSub">等待模型响应…</div>
+  </div>
+  <div class="panel">
+    <div class="label">本轮累计</div>
+    <div class="big" id="turnNum">—<span class="unit">tok/s</span></div>
+    <div class="sub" id="turnSub">本轮尚未开始</div>
+  </div>
+</div>
+
+<div class="panel" style="margin-top:12px">
+  <div class="label">近 20 次请求速度</div>
+  <div class="hist" id="hist"><div class="empty" style="width:100%">暂无数据 —— 在 ZCode 里发一条消息，这里就会出现速度柱。</div></div>
+  <div class="legend">
+    <span><i style="background:var(--accent)"></i>主请求</span>
+    <span><i style="background:#6e7681"></i>后台任务(lite)</span>
+    <span><i style="background:var(--orange)"></i>估算值</span>
+  </div>
+</div>
+
+<div class="grid" style="margin-top:12px">
+  <div class="panel" id="detail"><div class="label">最近请求详情</div><div class="sub">—</div></div>
+  <div class="panel"><div class="label">会话状态</div><div id="status"></div></div>
+</div>
+
+<footer>
+  <span id="ver"></span>
+  <span>数据源：~/.zcode/cli/rollout（ZCode 内部日志，字段缺失时以 ÷4 字符估算降级）</span>
+</footer>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const fmt = (n, d=1) => n == null ? "—" : Number(n).toLocaleString("zh-CN", { maximumFractionDigits: d });
+const secs = (ms) => ms < 60000 ? (ms/1000).toFixed(1)+"s" : (ms/60000).toFixed(1)+"min";
+
+function setConn(ok, msg) {
+  $("conn").innerHTML = `<span class="dot" style="background:${ok ? "#3fb950" : "#f85149"}"></span>${msg || (ok ? "已连接" : "已断开")}`;
+}
+
+function render(s) {
+  if (!s) return;
+  setConn(true, s.generating ? "生成中" : "已连接");
+  $("ver").textContent = `v${s.version || "?"} · 收集器 pid=${s.server?.pid ?? "?"} · 运行 ${secs((s.server?.uptimeSec || 0) * 1000)}`;
+  const srcMap = { live: "rollout 实时", waiting: "等待数据", idle: "空闲", none: "无 rollout 目录" };
+  $("src").textContent = "数据：" + (srcMap[s.dataState] || s.dataState || "");
+
+  // 大数字卡：生成中 vs 最近完成
+  if (s.generating) {
+    $("heroLabel").textContent = "当前状态";
+    $("heroNum").innerHTML = `<span class="gen pulse">生成中…</span>`;
+    const t = s.turn || {};
+    $("heroSub").innerHTML = `已耗时 <b class="num">${secs(t.elapsedMs || 0)}</b>` +
+      (t.tokens > 0 ? ` · 本轮已产出 <b class="num">${t.tokens}</b> tok（平均 <b class="num">${fmt(t.avgTokPerSec)}</b> tok/s）` : ` · 本次响应完成后刷新速度`);
+  } else if (s.last) {
+    $("heroLabel").textContent = "最近一次请求";
+    $("heroNum").innerHTML = `${fmt(s.last.tokPerSec)}<span class="unit">tok/s</span>`;
+    $("heroSub").textContent = `${s.last.modelId} · ${s.last.outputTokens} tok ÷ ${(s.last.durationMs/1000).toFixed(1)}s${s.last.source === "estimate" ? "（估算）" : ""}`;
+  } else {
+    $("heroLabel").textContent = "最近一次请求";
+    $("heroNum").innerHTML = `—<span class="unit">tok/s</span>`;
+    $("heroSub").textContent = s.stale ? "已超时未收到新请求" : "等待模型响应…";
+  }
+
+  // 本轮累计
+  if (s.generating && s.turn && s.turn.tokens > 0) {
+    $("turnNum").innerHTML = `${fmt(s.turn.avgTokPerSec)}<span class="unit">tok/s</span>`;
+    $("turnSub").innerHTML = `Σ ${s.turn.tokens} tok · ${s.turn.requests} 次请求 · 历时 ${secs(s.turn.elapsedMs)}`;
+  } else if (!s.generating && s.closed && (s.closed.tokens > 0)) {
+    $("turnNum").innerHTML = `${fmt(s.closed.avgTokPerSec)}<span class="unit">tok/s</span>`;
+    $("turnSub").innerHTML = `上一轮：Σ ${s.closed.tokens} tok · ${s.closed.requests} 次请求 · ${secs(s.closed.durationSec*1000)}${s.closed.estimated ? "（估算）" : ""}`;
+  } else {
+    $("turnNum").innerHTML = `—<span class="unit">tok/s</span>`;
+    $("turnSub").textContent = s.generating ? "本轮首次请求完成后可见" : "本轮尚未开始";
+  }
+
+  // 历史条形图
+  const h = s.history || [];
+  if (!h.length) {
+    $("hist").innerHTML = `<div class="empty" style="width:100%">暂无数据 —— 在 ZCode 里发一条消息，这里就会出现速度柱。</div>`;
+  } else {
+    const max = Math.max(...h.map(x => x.tokPerSec), 1);
+    $("hist").innerHTML = h.map(x => {
+      const cls = x.source === "estimate" ? "est" : (x.role === "lite" ? "lite" : "");
+      const tip = `${fmt(x.tokPerSec)} tok/s · ${x.outputTokens}tok · ${x.modelId}`;
+      return `<div class="bar ${cls}" style="height:${Math.max(3, x.tokPerSec/max*100)}%" data-tip="${tip}"></div>`;
+    }).join("");
+  }
+
+  // 详情 & 状态
+  const l = s.last;
+  $("detail").innerHTML = `<div class="label">最近请求详情</div>` + (l ? `
+    <div class="row"><span>模型</span><b>${l.modelId}</b></div>
+    <div class="row"><span>输出 tokens</span><b class="num">${l.outputTokens}</b></div>
+    <div class="row"><span>请求耗时</span><b class="num">${(l.durationMs/1000).toFixed(2)}s</b></div>
+    <div class="row"><span>速度</span><b class="num">${fmt(l.tokPerSec)} tok/s</b></div>
+    <div class="row"><span>完成于</span><b>${new Date(l.completedAtMs).toLocaleTimeString("zh-CN")}</b></div>`
+    : `<div class="sub">—</div>`);
+
+  const lite = s.liteCount || 0;
+  $("status").innerHTML = `
+    <div class="row"><span>会话</span><b>${s.sessionId ? s.sessionId.slice(0, 13) + "…" : "—"}</b></div>
+    <div class="row"><span>状态</span><b>${s.generating ? "🟠 生成中" : (s.stale ? "⚪ 等待中" : "🟢 空闲")}</b></div>
+    <div class="row"><span>后台任务(lite)</span><b class="num">${lite} 次${s.lastLite ? " · " + fmt(s.lastLite.tokPerSec) + " tok/s" : ""}</b></div>
+    <div class="row"><span>最近更新</span><b>${s.lastRecordAgeMs != null ? Math.round(s.lastRecordAgeMs/1000) + "s 前" : "—"}</b></div>`;
+}
+
+function connect() {
+  const es = new EventSource("/events");
+  es.addEventListener("state", (e) => { try { render(JSON.parse(e.data)); } catch {} });
+  es.onerror = () => { setConn(false, "断线，自动重连…"); };
+}
+
+fetch("/api/state").then(r => r.json()).then(render).catch(() => {});
+connect();
+</script>
+</body>
+</html>
