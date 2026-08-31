@@ -14,6 +14,18 @@
         "monitor",
         "dashboard"
       ]
+    },
+    {
+      "name": "trellis-hooks",
+      "source": "./plugins/trellis-hooks",
+      "description": "Trellis 工作流 hooks（SessionStart 概览 / UserPromptSubmit workflow-state / PreToolUse 子代理上下文），插件化绕过工作区 hook 信任门",
+      "version": "0.1.0",
+      "category": "utility",
+      "tags": [
+        "trellis",
+        "hooks",
+        "workflow"
+      ]
     }
   ]
 }

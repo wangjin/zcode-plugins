@@ -1,0 +1,46 @@
+{
+  "description": "Trellis 工作流上下文注入：SessionStart 加载会话概览，UserPromptSubmit 注入每轮 workflow-state 面包屑，PreToolUse(Agent|Task) 为子代理注入任务上下文。脚本运行时从 hook 输入的 cwd 向上查找项目 .trellis/，非 Trellis 项目静默退出（exit 0 无输出）。",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|clear|compact",
+        "hooks": [
+          {
+            "type": "process",
+            "command": "python3",
+            "args": ["${ZCODE_PLUGIN_ROOT}/hooks/session-start.py"],
+            "timeoutMs": 30000,
+            "enabled": true
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "process",
+            "command": "python3",
+            "args": ["${ZCODE_PLUGIN_ROOT}/hooks/inject-workflow-state.py"],
+            "timeoutMs": 15000,
+            "enabled": true
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Agent|Task",
+        "hooks": [
+          {
+            "type": "process",
+            "command": "python3",
+            "args": ["${ZCODE_PLUGIN_ROOT}/hooks/inject-subagent-context.py"],
+            "timeoutMs": 30000,
+            "enabled": true
+          }
+        ]
+      }
+    ]
+  }
+}

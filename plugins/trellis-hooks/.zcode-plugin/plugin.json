@@ -1,0 +1,8 @@
+{
+  "name": "trellis-hooks",
+  "version": "0.1.0",
+  "description": "Trellis 工作流 hooks：SessionStart 注入会话概览，UserPromptSubmit 注入每轮 workflow-state 面包屑，PreToolUse(Agent|Task) 为子代理注入任务上下文。以插件形式分发，绕过工作区 hook 信任门；脚本运行时自动向上探测项目 .trellis/，非 Trellis 项目静默退出。",
+  "author": { "name": "wangjin" },
+  "license": "MIT",
+  "keywords": ["trellis", "hooks", "workflow", "context"]
+}
