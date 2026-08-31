@@ -68,3 +68,24 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 4: Trellis hooks 插件化：trellis-hooks 绕过工作区信任门
+
+**Date**: 2026-08-31
+**Task**: Trellis hooks 插件化：trellis-hooks 绕过工作区信任门
+**Branch**: `main`
+
+### Summary
+
+诊断 UserPromptSubmit『工作区 已阻止』根因：ZCode 工作区 hook 信任门（config_project_hooks_pending_trust），信任记录存在但客户端重启后重新武装。将 3 个 Trellis hooks（SessionStart/UserPromptSubmit/PreToolUse）迁移为本地插件 trellis-hooks v0.1.0（type:process + ZCODE_PLUGIN_ROOT，不经过信任门），登记进 marketplace.json 并推送（27b3cfc），清空工作区 .zcode/config.json hooks，用户级启用 trellis-hooks@zcode-toolbox 并预置客户端缓存。三脚本从缓存目录实测 exit 0 输出正确。待办：重启客户端在插件管理确认启用；其他 Trellis 项目的工作区 hooks 需清空以免双重注入。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `27b3cfc` | (see git log) |
+
+### Status
+
+[OK] **Completed**
