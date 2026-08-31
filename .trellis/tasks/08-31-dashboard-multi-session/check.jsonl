@@ -1,0 +1,2 @@
+{"file": ".trellis/tasks/08-31-dashboard-multi-session/research-arch.md", "reason": "检查锚点：路由规则、snapshot 契约、既有约束（零依赖/隐私红线/版本三处同步）均以此为准"}
+{"file": "plugins/token-speed-dashboard/README.md", "reason": "核对 README 是否更新多会话/生命周期/过滤口径，且与实现一致"}

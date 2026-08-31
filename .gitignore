@@ -1,0 +1,9 @@
+# macOS
+.DS_Store
+
+# 本地工具产物
+.codegraph/
+.playwright-mcp/
+
+# 根目录截图（验收记录，不入库）
+/*.png
