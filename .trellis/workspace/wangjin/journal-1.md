@@ -47,3 +47,24 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 3: 插件市场更名 zcode-toolbox
+
+**Date**: 2026-08-31
+**Task**: 插件市场更名 zcode-toolbox
+**Branch**: `main`
+
+### Summary
+
+应用户讨论结果，将本地插件市场由 zcode-local-dev 更名为 zcode-toolbox：marketplace.json 的 name/description 与根 README 同步更新，提交 d063a97。注意事项已告知用户：客户端需移除旧市场源重新添加并重装插件（插件 ID 命名空间随市场名变化）；历史数据目录若按 <plugin>@<marketplace> 注入需手动迁移以保留 7 天 history。.trellis 历史记录中的旧名引用按惯例不改。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d063a97` | (see git log) |
+
+### Status
+
+[OK] **Completed**
