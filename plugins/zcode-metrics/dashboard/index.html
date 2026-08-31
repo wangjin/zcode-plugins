@@ -181,6 +181,54 @@
     color: var(--faint); font-size: 11px; display: flex; gap: 14px; flex-wrap: wrap;
   }
 
+  /* ————— PC 全屏仪表盘：铺满视口、不上下滚动（≥1200×620） ————— */
+  @media (min-width: 1200px) and (min-height: 620px) {
+    html, body { height: 100%; }
+    body {
+      max-width: none; height: 100vh; overflow: hidden;
+      display: flex; flex-direction: column; padding: 16px 22px 10px;
+    }
+    header { flex: none; margin-bottom: 12px; }
+    #sessTabs { flex: none; }
+    #sessTabs:not(:empty) { margin-bottom: 12px; }
+    main {
+      flex: 1 1 auto; min-height: 0; gap: 12px;
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      grid-template-rows: auto minmax(0, 13fr) minmax(0, 10fr) auto;
+      grid-template-areas:
+        "last last last turn turn turn sess sess sess det  det  det"
+        "trnd trnd trnd trnd trnd trnd strm strm strm strm strm strm"
+        "modl modl modl modl modl modl modl cach cach cach cach cach"
+        "foot foot foot foot foot foot foot  foot foot foot foot foot";
+    }
+    main .grid { display: contents; }  /* 拆掉两列包装，子面板直接进全屏 Grid */
+    main .panel { display: flex; flex-direction: column; min-height: 0; padding: 13px 15px; }
+    .p-last { grid-area: last; } .p-turn { grid-area: turn; }
+    .p-sess { grid-area: sess; } .p-det  { grid-area: det; }
+    .p-strm { grid-area: strm; } .p-trnd { grid-area: trnd; }
+    .p-modl { grid-area: modl; overflow: hidden; } .p-cach { grid-area: cach; }
+
+    .big { font-size: 40px; margin: 0 0 2px; }
+    .p-det .row, .p-sess .row { padding: 4px 0; }
+
+    /* 柱图：条形区吃掉面板剩余高度 */
+    .p-strm #hist { flex: 1 1 auto; height: auto; min-height: 56px; }
+    .p-strm .legend { flex: none; margin-top: 8px; }
+
+    /* 趋势图：SVG 高度随面板自适应（JS 写入 --trend-h），x 轴/图例固定 */
+    #trendWrap { flex: 1 1 auto; min-height: 124px; }
+    #trend { height: 100%; }
+    #trend svg { height: var(--trend-h, 180px); margin-top: 6px; }
+    .p-trnd .legend { flex: none; margin-top: 6px; }
+
+    .p-modl #models { flex: 1 1 auto; min-height: 0; overflow: auto; }
+    .p-cach #cache { flex: 1 1 auto; min-height: 0; display: flex; align-items: center; flex-wrap: wrap; }
+    .p-cach #cacheNote { flex: none; }
+
+    footer { grid-area: foot; margin-top: 0; padding-top: 6px; flex: none; }
+  }
+
   @media (max-width: 640px) {
     body { padding: 18px 14px 24px; }
     .grid { grid-template-columns: 1fr; }
@@ -209,17 +257,17 @@
   </div>
 </header>
 
-<main>
-  <div id="sessTabs"></div>
+<nav id="sessTabs" aria-label="会话切换"></nav>
 
+<main>
   <div class="grid">
-    <div class="panel">
+    <div class="panel p-last">
       <div class="eyebrow">Readout · Last</div>
       <div class="label" id="heroLabel">最近一次请求</div>
       <div class="big" id="heroNum">—<span class="unit">tok/s</span></div>
       <div class="sub" id="heroSub">等待模型响应…</div>
     </div>
-    <div class="panel">
+    <div class="panel p-turn">
       <div class="eyebrow">Readout · Turn</div>
       <div class="label">本轮累计</div>
       <div class="big" id="turnNum">—<span class="unit">tok/s</span></div>
@@ -227,7 +275,7 @@
     </div>
   </div>
 
-  <div class="panel">
+  <div class="panel p-strm">
     <div class="p-head">
       <div>
         <div class="eyebrow">Stream</div>
@@ -243,18 +291,18 @@
   </div>
 
   <div class="grid">
-    <div class="panel">
+    <div class="panel p-det">
       <div class="eyebrow">Detail</div>
       <div id="detail"><div class="label">最近请求详情</div><div class="sub">—</div></div>
     </div>
-    <div class="panel">
+    <div class="panel p-sess">
       <div class="eyebrow">Session</div>
       <div class="label">会话状态</div>
       <div id="status" style="margin-top:6px"></div>
     </div>
   </div>
 
-  <div class="panel">
+  <div class="panel p-trnd">
     <div class="p-head">
       <div>
         <div class="eyebrow">Scope</div>
@@ -273,7 +321,7 @@
     </div>
   </div>
 
-  <div class="panel">
+  <div class="panel p-modl">
     <div class="p-head">
       <div>
         <div class="eyebrow">Models</div>
@@ -283,7 +331,7 @@
     <div id="models"><div class="empty">暂无模型统计数据。</div></div>
   </div>
 
-  <div class="panel">
+  <div class="panel p-cach">
     <div class="p-head">
       <div>
         <div class="eyebrow">Cache</div>
@@ -429,6 +477,7 @@ let selectedSid = null; // null = "全部"（自动跟随最近活跃会话）
 let curScope = { scoped: false, name: "全部会话", sess: null }; // 分析面板当前口径
 let trendGran = "hour";
 let trendGeom = null; // { pts:[{fx,fy,tip}], lite:[…] } 供悬停读数定位
+let trendH = 180;     // 趋势图当前高度（全屏模式随面板自适应）
 function esc(x) { return String(x).replace(/[&<>"]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c])); }
 
 document.getElementById("trendTabs").addEventListener("click", (e) => {
@@ -462,7 +511,13 @@ function renderTrend() {
       : `<div class="empty">窗口内暂无数据（store 共 ${s.store ? s.store.count : 0} 条，可能都在窗口之外）。</div>`;
     return;
   }
-  const W = Math.max(320, el.clientWidth || 800), H = 180, PAD = 10;
+  const W = Math.max(320, el.clientWidth || 800), PAD = 10;
+  // 全屏模式下 SVG 高度随面板自适应：viewBox 单位与像素保持 1:1，图表不被拉伸
+  const fullMode = matchMedia("(min-width:1200px) and (min-height:620px)").matches;
+  const wrapH = fullMode ? ($("trendWrap").clientHeight || 0) : 0;
+  trendH = fullMode ? Math.max(100, wrapH - 28) : 180;
+  el.style.setProperty("--trend-h", trendH + "px");
+  const H = trendH;
   const all = pts.concat(litePts);
   const maxV = Math.max(...all.map(b => Math.max(b.main?.avg || 0, b.lite?.avg || 0)), 1);
   const n = series.length;
@@ -521,10 +576,17 @@ function hideTrendTip() { if (trendTip) trendTip.style.display = "none"; }
     trendTip.innerHTML = best.tip;
     trendTip.style.display = "block";
     trendTip.style.left = Math.min(Math.max(best.fx * rect.width, 70), rect.width - 70) + "px";
-    trendTip.style.top = Math.max(best.fy * 180 - 12, 4) + "px";
+    trendTip.style.top = Math.max(best.fy * trendH - 12, 4) + "px";
   });
   box.addEventListener("pointerleave", hideTrendTip);
   window.addEventListener("resize", () => { if (lastSnap) renderTrend(); });
+  // 全屏模式下 wrap 高度随网格变化（会话条出现/消失等）：尺寸一变就重绘趋势图
+  let roFrame = 0;
+  new ResizeObserver(() => {
+    if (!lastSnap) return;
+    cancelAnimationFrame(roFrame);
+    roFrame = requestAnimationFrame(renderTrend);
+  }).observe(box);
 })();
 
 function renderModels(models) {
