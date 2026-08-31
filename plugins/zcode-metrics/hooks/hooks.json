@@ -1,0 +1,49 @@
+{
+  "description": "Token speed dashboard：拉起/保活本地收集器，并在 turn 边界（提交=起点 T₁、停止=收尾）上报事件。所有 hook 仅返回空结果，不向模型注入任何上下文。",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|clear|compact",
+        "hooks": [
+          {
+            "type": "process",
+            "command": "node",
+            "args": [
+              "${ZCODE_PLUGIN_ROOT}/hooks/ensure.mjs",
+              "session_start",
+              "${user_config.openDashboard}"
+            ],
+            "timeoutMs": 3000,
+            "enabled": true
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "process",
+            "command": "node",
+            "args": ["${ZCODE_PLUGIN_ROOT}/hooks/ensure.mjs", "user_prompt_submit"],
+            "timeoutMs": 1500,
+            "enabled": true
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "process",
+            "command": "node",
+            "args": ["${ZCODE_PLUGIN_ROOT}/hooks/ensure.mjs", "stop"],
+            "timeoutMs": 1500,
+            "enabled": true
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>zcode-metrics · Token 速度仪表盘</title>
+<link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="%2312100D"/><path d="M5 20 L11 20 L14 11 L18 25 L21 16 L24 20 L27 20" stroke="%23F2A64B" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>'>
+<style>
+  :root {
+    --bg: #12100D; --panel: #1A1712; --panel-hi: #221E17; --line: #2B261E;
+    --text: #EAE1D3; --dim: #9C9080; --faint: #7A7062;
+    --amber: #F2A64B; --amber-hi: #FFC66E; --amber-soft: rgba(242,166,75,.12);
+    --slate: #8FA6BA; --jade: #63B58F; --red: #E06C5F;
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  ::selection { background: rgba(242,166,75,.28); }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 14px/1.5 var(--sans);
+    min-height: 100vh; padding: 26px 20px 30px; max-width: 1020px; margin: 0 auto;
+  }
+  button { font-family: var(--sans); }
+  button:focus-visible { outline: 1px solid var(--amber); outline-offset: 2px; }
+
+  /* ————— 铭牌 header ————— */
+  header { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
+  .eyebrow {
+    font: 600 10px/1 var(--mono); letter-spacing: .16em; text-transform: uppercase;
+    color: var(--faint); margin-bottom: 7px;
+  }
+  header h1 { font-size: 19px; font-weight: 650; letter-spacing: .01em; }
+  .hchips { display: flex; gap: 8px; padding-bottom: 2px; }
+  .badge {
+    font-size: 11px; padding: 3px 10px; border-radius: 999px;
+    background: var(--panel); color: var(--dim); border: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; vertical-align: 1px; }
+  .dot.led { box-shadow: 0 0 6px currentColor; }
+
+  /* ————— 面板体系 ————— */
+  main { display: flex; flex-direction: column; gap: 14px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px; }
+  .p-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin-bottom: 10px; }
+  .label { color: var(--dim); font-size: 13px; }
+  .tabs { display: flex; gap: 6px; flex-shrink: 0; }
+
+  /* ————— 读数 ————— */
+  .big {
+    font: 600 44px/1.12 var(--mono); font-variant-numeric: tabular-nums;
+    color: var(--amber); text-shadow: 0 0 26px rgba(242,166,75,.22);
+    margin: 2px 0 4px;
+  }
+  #turnNum { color: var(--text); text-shadow: none; }
+  .unit { font-size: 15px; color: var(--dim); font-weight: 400; margin-left: 6px; letter-spacing: .02em; }
+  .sub { color: var(--dim); font-size: 12px; margin-top: 4px; }
+  .sub b { font-weight: 600; color: var(--text); }
+  .gen { color: var(--amber-hi); font-weight: 600; text-shadow: 0 0 18px rgba(255,198,110,.35); }
+  .pulse { animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
+  .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+  /* ————— 键值行 ————— */
+  .row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+  .row:last-child { border-bottom: none; }
+  .row span { color: var(--dim); font-size: 12.5px; flex-shrink: 0; }
+  .row b { font-family: var(--mono); font-size: 13px; font-weight: 600; text-align: right; overflow-wrap: anywhere; }
+
+  /* ————— 近 20 次柱图 ————— */
+  .hist { display: flex; align-items: flex-end; gap: 3px; height: 128px; margin-top: 6px; border-bottom: 1px solid var(--line); }
+  .bar { flex: 1; min-width: 4px; border-radius: 2px 2px 0 0; background: var(--amber); position: relative; transition: height .3s; }
+  .bar:hover { background: var(--amber-hi); }
+  .bar.lite { background: var(--slate); }
+  .bar.est {
+    background: repeating-linear-gradient(-45deg, rgba(242,166,75,.55) 0 2px, rgba(242,166,75,.08) 2px 5px);
+    box-shadow: inset 0 0 0 1px rgba(242,166,75,.3);
+  }
+  .bar:hover::after {
+    content: attr(data-tip); position: absolute; bottom: calc(100% + 6px); left: 50%;
+    transform: translateX(-50%); background: var(--panel-hi); color: var(--text);
+    border: 1px solid var(--line); padding: 4px 9px; border-radius: 6px;
+    font: 11px/1.4 var(--mono); white-space: nowrap; z-index: 4; box-shadow: 0 4px 14px rgba(0,0,0,.4);
+  }
+
+  /* ————— 图例 ————— */
+  .legend { display: flex; gap: 16px; margin-top: 10px; color: var(--dim); font-size: 11px; align-items: center; }
+  .legend .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+  .sw-main { background: var(--amber); }
+  .sw-lite { background: var(--slate); }
+  .sw-est { background: repeating-linear-gradient(-45deg, rgba(242,166,75,.55) 0 2px, rgba(242,166,75,.08) 2px 5px); box-shadow: inset 0 0 0 1px rgba(242,166,75,.3); }
+  .sw-line { width: 14px; height: 2px; border-radius: 1px; background: var(--amber); box-shadow: 0 0 6px rgba(242,166,75,.6); vertical-align: 2px; }
+  .sw-liteline { width: 14px; height: 0; border-top: 2px dashed var(--slate); border-radius: 0; vertical-align: 2px; }
+  .legend-hint { margin-left: auto; color: var(--faint); }
+
+  /* ————— 空态 ————— */
+  .empty { color: var(--faint); text-align: center; padding: 26px 12px; font-size: 12.5px; border: 1px dashed var(--line); border-radius: 8px; }
+
+  /* ————— 切换 tab ————— */
+  .tab {
+    background: transparent; border: 1px solid var(--line); color: var(--dim);
+    font-size: 11.5px; padding: 3px 12px; border-radius: 999px; cursor: pointer;
+    transition: color .15s, border-color .15s, background .15s;
+  }
+  .tab:hover { color: var(--text); border-color: var(--faint); }
+  .tab.active { color: var(--amber-hi); border-color: rgba(242,166,75,.45); background: var(--amber-soft); }
+  #sessTabs { display: none; gap: 8px; flex-wrap: wrap; align-items: center; }
+  #sessTabs .tab { font-size: 12px; padding: 4px 13px; }
+
+  /* ————— 趋势示波器 ————— */
+  #trendWrap { position: relative; }
+  #trend svg { width: 100%; height: 180px; display: block; margin-top: 8px; }
+  #trend svg .grid-l { stroke: var(--line); stroke-width: 1; stroke-dasharray: 2 5; }
+  #trend svg .grid-base { stroke: var(--faint); stroke-dasharray: none; }
+  #trend svg .avg-line {
+    stroke: var(--amber); stroke-width: 2; fill: none;
+    stroke-linejoin: round; stroke-linecap: round;
+    filter: drop-shadow(0 0 5px rgba(242,166,75,.45));
+  }
+  #trend svg .avg-area { fill: var(--amber-soft); stroke: none; }
+  #trend svg .lite-line { stroke: var(--slate); stroke-width: 1.4; stroke-dasharray: 4 4; fill: none; }
+  #trend svg .dot { fill: var(--amber); transition: r .12s; }
+  #trend svg .dot:hover { r: 5; }
+  #trend svg .dot-lite { fill: var(--slate); }
+  #trend svg text { fill: var(--faint); font: 10px var(--mono); }
+  #trend .xlab { display: flex; justify-content: space-between; color: var(--faint); font: 10.5px var(--mono); margin-top: 4px; }
+  .trend-tip {
+    position: absolute; display: none; transform: translate(-50%, -100%);
+    background: var(--panel-hi); border: 1px solid var(--line); border-radius: 6px;
+    padding: 5px 10px; font: 11px/1.5 var(--mono); color: var(--dim);
+    white-space: nowrap; pointer-events: none; z-index: 4; box-shadow: 0 4px 14px rgba(0,0,0,.45);
+  }
+  .trend-tip b { color: var(--amber-hi); font-weight: 600; }
+  /* 磷光绘入（仅首次渲染；reduced-motion 下直接显示） */
+  .boot .avg-line { stroke-dasharray: 1; stroke-dashoffset: 1; animation: trace 1s .15s ease-out forwards; }
+  .boot .avg-area { opacity: 0; animation: fadein .7s .6s ease-out forwards; }
+  @keyframes trace { to { stroke-dashoffset: 0; } }
+  @keyframes fadein { to { opacity: 1; } }
+
+  /* ————— 模型对比表 ————— */
+  #models { overflow-x: auto; }
+  table.cmp { width: 100%; border-collapse: collapse; margin-top: 4px; font-size: 12.5px; }
+  table.cmp th {
+    text-align: left; color: var(--faint); font-weight: 500; font-size: 11px;
+    padding: 6px 10px 6px 0; border-bottom: 1px solid var(--line); white-space: nowrap;
+  }
+  table.cmp td { padding: 7px 10px 7px 0; border-bottom: 1px solid var(--line); }
+  table.cmp tr:last-child td { border-bottom: none; }
+  table.cmp tr:hover td { background: rgba(255,255,255,.02); }
+  table.cmp th:nth-child(n+3), table.cmp td:nth-child(n+3) { text-align: right; }
+  table.cmp td { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  table.cmp td.mname { font-family: var(--sans); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  table.cmp td .cmeter { display: inline-block; width: 52px; height: 4px; border-radius: 2px; background: #2A251C; margin-left: 8px; vertical-align: 1px; overflow: hidden; }
+  table.cmp td .cmeter i { display: block; height: 100%; background: var(--amber); border-radius: 2px; }
+  tr.r-lite td .cmeter i { background: var(--slate); }
+  td.c-avg { color: var(--amber-hi); }
+  .role-tag {
+    font: 600 10px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase;
+    padding: 2px 8px; border-radius: 999px; display: inline-block;
+  }
+  tr .role-tag { color: var(--amber); border: 1px solid rgba(242,166,75,.4); }
+  tr.r-lite .role-tag { color: var(--slate); border-color: rgba(143,166,186,.4); }
+
+  /* ————— 缓存分析 ————— */
+  .cache-wrap { display: flex; gap: 26px; flex-wrap: wrap; margin-top: 6px; align-items: stretch; }
+  .hit-block { min-width: 200px; padding-right: 26px; border-right: 1px solid var(--line); display: flex; flex-direction: column; }
+  .hit-block b { font: 600 38px/1.1 var(--mono); font-variant-numeric: tabular-nums; color: var(--amber); text-shadow: 0 0 24px rgba(242,166,75,.2); }
+  .hmeter { position: relative; height: 8px; background: #282218; border-radius: 2px; overflow: hidden; margin: 10px 0 8px; }
+  .hmeter i { position: absolute; top: 0; bottom: 0; left: 0; background: linear-gradient(90deg, #C77E2E, var(--amber)); border-radius: 0 2px 2px 0; }
+  .hmeter::after { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(90deg, transparent 0 10px, var(--bg) 10px 12px); }
+  .hit-block span { font-size: 11px; color: var(--dim); }
+  .kpi { display: flex; flex-direction: column; gap: 3px; justify-content: center; }
+  .kpi b { font: 600 21px/1.2 var(--mono); font-variant-numeric: tabular-nums; }
+  .kpi span { font-size: 11px; color: var(--dim); }
+
+  footer {
+    margin-top: 4px; padding-top: 14px; border-top: 1px solid var(--line);
+    color: var(--faint); font-size: 11px; display: flex; gap: 14px; flex-wrap: wrap;
+  }
+
+  @media (max-width: 640px) {
+    body { padding: 18px 14px 24px; }
+    .grid { grid-template-columns: 1fr; }
+    header { flex-direction: column; align-items: flex-start; }
+    .big { font-size: 36px; }
+    .hit-block { border-right: none; padding-right: 0; border-bottom: 1px solid var(--line); padding-bottom: 14px; min-width: 0; }
+    .cache-wrap { gap: 18px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .pulse, .boot .avg-line, .boot .avg-area { animation: none !important; }
+    .boot .avg-line { stroke-dasharray: none; stroke-dashoffset: 0; }
+    .boot .avg-area { opacity: 1; }
+    .bar, .tab, #trend svg .dot { transition: none !important; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <div class="eyebrow">Zcode · Model I/O Telemetry</div>
+    <h1>Token 速度仪表盘</h1>
+  </div>
+  <div class="hchips">
+    <span class="badge" id="conn"><span class="dot" style="background:var(--red)"></span>连接中…</span>
+    <span class="badge" id="src"></span>
+  </div>
+</header>
+
+<main>
+  <div id="sessTabs"></div>
+
+  <div class="grid">
+    <div class="panel">
+      <div class="eyebrow">Readout · Last</div>
+      <div class="label" id="heroLabel">最近一次请求</div>
+      <div class="big" id="heroNum">—<span class="unit">tok/s</span></div>
+      <div class="sub" id="heroSub">等待模型响应…</div>
+    </div>
+    <div class="panel">
+      <div class="eyebrow">Readout · Turn</div>
+      <div class="label">本轮累计</div>
+      <div class="big" id="turnNum">—<span class="unit">tok/s</span></div>
+      <div class="sub" id="turnSub">本轮尚未开始</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="p-head">
+      <div>
+        <div class="eyebrow">Stream</div>
+        <div class="label">近 20 次请求速度</div>
+      </div>
+    </div>
+    <div class="hist" id="hist"><div class="empty" style="width:100%">暂无数据 —— 在 ZCode 里发一条消息，这里就会出现速度柱。</div></div>
+    <div class="legend">
+      <span><i class="sw sw-main"></i>主请求</span>
+      <span><i class="sw sw-lite"></i>后台任务(lite)</span>
+      <span><i class="sw sw-est"></i>估算值</span>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="panel">
+      <div class="eyebrow">Detail</div>
+      <div id="detail"><div class="label">最近请求详情</div><div class="sub">—</div></div>
+    </div>
+    <div class="panel">
+      <div class="eyebrow">Session</div>
+      <div class="label">会话状态</div>
+      <div id="status" style="margin-top:6px"></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="p-head">
+      <div>
+        <div class="eyebrow">Scope</div>
+        <div class="label" id="trendLabel">速度趋势（吞吐加权 tok/s）</div>
+      </div>
+      <span id="trendTabs" class="tabs">
+        <button class="tab active" data-gran="hour">近 48 小时</button>
+        <button class="tab" data-gran="day">近 7 天</button>
+      </span>
+    </div>
+    <div id="trendWrap"><div id="trend"><div class="empty">暂无历史数据 —— 有请求后这里会绘制速度趋势线。</div></div></div>
+    <div class="legend">
+      <span><i class="sw sw-line"></i>主请求 avg</span>
+      <span><i class="sw sw-liteline"></i>后台任务(lite)</span>
+      <span class="legend-hint">悬停查看该时段读数</span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="p-head">
+      <div>
+        <div class="eyebrow">Models</div>
+        <div class="label" id="modelsLabel">模型对比（近 7 天）</div>
+      </div>
+    </div>
+    <div id="models"><div class="empty">暂无模型统计数据。</div></div>
+  </div>
+
+  <div class="panel">
+    <div class="p-head">
+      <div>
+        <div class="eyebrow">Cache</div>
+        <div class="label" id="cacheLabel">缓存分析（近 7 天，仅精确记录）</div>
+      </div>
+    </div>
+    <div id="cache"><div class="empty">暂无 usage 数据 —— 缓存命中率需要 rollout 的精确 usage 字段。</div></div>
+    <div class="sub" id="cacheNote" style="margin-top:10px"></div>
+  </div>
+
+  <footer>
+    <span id="ver"></span>
+    <span>数据源：~/.zcode/cli/rollout（字段缺失时以 ÷4 字符估算降级）· 历史保留 7 天（plugin-data/history.jsonl）· 会话列表为内存态（30 分钟未活跃自动下线，最多 5 个）</span>
+  </footer>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const fmt = (n, d=1) => n == null ? "—" : Number(n).toLocaleString("zh-CN", { maximumFractionDigits: d });
+const secs = (ms) => ms < 60000 ? (ms/1000).toFixed(1)+"s" : (ms/60000).toFixed(1)+"min";
+
+function setConn(ok, msg) {
+  $("conn").innerHTML = `<span class="dot" style="background:${ok ? "var(--jade)" : "var(--red)"}"></span>${msg || (ok ? "已连接" : "已断开")}`;
+}
+
+function render(s) {
+  if (!s) return;
+  setConn(true, s.generating ? "生成中" : "已连接");
+  $("ver").textContent = `v${s.version || "?"} · 收集器 pid=${s.server?.pid ?? "?"} · 运行 ${secs((s.server?.uptimeSec || 0) * 1000)}`;
+  const srcMap = { live: "rollout 实时", waiting: "等待数据", idle: "空闲", none: "无 rollout 目录" };
+  $("src").textContent = "数据：" + (srcMap[s.dataState] || s.dataState || "");
+
+  // —— 会话切换：selectedSid=null 自动跟随最近活跃；锁定的会话下线后回落 ——
+  const sessions = s.sessions || [];
+  if (selectedSid != null && !sessions.some((x) => x.sessionId === selectedSid)) selectedSid = null;
+  const sess = selectedSid != null ? sessions.find((x) => x.sessionId === selectedSid) : (sessions[0] || null);
+  renderTabs(sessions);
+
+  // 大数字卡：所选会话 生成中 vs 最近完成
+  if (sess && sess.generating) {
+    $("heroLabel").textContent = "当前状态";
+    $("heroNum").innerHTML = `<span class="gen pulse">生成中…</span>`;
+    const t = sess.turn || {};
+    $("heroSub").innerHTML = `已耗时 <b class="num">${secs(t.elapsedMs || 0)}</b>` +
+      (t.tokens > 0 ? ` · 本轮已产出 <b class="num">${t.tokens}</b> tok（平均 <b class="num">${fmt(t.avgTokPerSec)}</b> tok/s）` : ` · 本次响应完成后刷新速度`);
+  } else if (sess && sess.last) {
+    $("heroLabel").textContent = "最近一次请求";
+    $("heroNum").innerHTML = `${fmt(sess.last.tokPerSec)}<span class="unit">tok/s</span>`;
+    $("heroSub").textContent = `${sess.last.modelId} · ${sess.last.outputTokens} tok ÷ ${(sess.last.durationMs/1000).toFixed(1)}s${sess.last.source === "estimate" ? "（估算）" : ""}`;
+  } else {
+    $("heroLabel").textContent = "最近一次请求";
+    $("heroNum").innerHTML = `—<span class="unit">tok/s</span>`;
+    $("heroSub").textContent = sess && sess.stale ? "已超时未收到新请求" : "等待模型响应…";
+  }
+
+  // 本轮累计（所选会话）
+  if (sess && sess.generating && sess.turn && sess.turn.tokens > 0) {
+    $("turnNum").innerHTML = `${fmt(sess.turn.avgTokPerSec)}<span class="unit">tok/s</span>`;
+    $("turnSub").innerHTML = `Σ ${sess.turn.tokens} tok · ${sess.turn.requests} 次请求 · 历时 ${secs(sess.turn.elapsedMs)}`;
+  } else if (sess && !sess.generating && sess.closed && (sess.closed.tokens > 0)) {
+    $("turnNum").innerHTML = `${fmt(sess.closed.avgTokPerSec)}<span class="unit">tok/s</span>`;
+    $("turnSub").innerHTML = `上一轮：Σ ${sess.closed.tokens} tok · ${sess.closed.requests} 次请求 · ${secs(sess.closed.durationSec*1000)}${sess.closed.estimated ? "（估算）" : ""}`;
+  } else {
+    $("turnNum").innerHTML = `—<span class="unit">tok/s</span>`;
+    $("turnSub").textContent = sess && sess.generating ? "本轮首次请求完成后可见" : "本轮尚未开始";
+  }
+
+  // 历史条形图
+  const h = s.history || [];
+  if (!h.length) {
+    $("hist").innerHTML = `<div class="empty" style="width:100%">暂无数据 —— 在 ZCode 里发一条消息，这里就会出现速度柱。</div>`;
+  } else {
+    const max = Math.max(...h.map(x => x.tokPerSec), 1);
+    $("hist").innerHTML = h.map(x => {
+      const cls = x.source === "estimate" ? "est" : (x.role === "lite" ? "lite" : "");
+      const tip = `${fmt(x.tokPerSec)} tok/s · ${x.outputTokens}tok · ${x.modelId}`;
+      return `<div class="bar ${cls}" style="height:${Math.max(3, x.tokPerSec/max*100)}%" data-tip="${tip}"></div>`;
+    }).join("");
+  }
+
+  // 详情 & 状态（所选会话；lite 为全局口径）
+  const l = sess ? sess.last : null;
+  $("detail").innerHTML = `<div class="label">最近请求详情</div>` + (l ? `
+    <div class="row"><span>模型</span><b>${l.modelId}</b></div>
+    <div class="row"><span>输出 tokens</span><b class="num">${l.outputTokens}</b></div>
+    <div class="row"><span>请求耗时</span><b class="num">${(l.durationMs/1000).toFixed(2)}s</b></div>
+    <div class="row"><span>速度</span><b class="num">${fmt(l.tokPerSec)} tok/s</b></div>
+    <div class="row"><span>完成于</span><b>${new Date(l.completedAtMs).toLocaleTimeString("zh-CN")}</b></div>`
+    : `<div class="sub">—</div>`);
+
+  const lite = s.liteCount || 0;
+  const stLed = sess
+    ? (sess.generating
+        ? `<span class="dot led" style="background:var(--amber-hi);color:var(--amber-hi)"></span>生成中`
+        : (sess.stale
+          ? `<span class="dot led" style="background:var(--faint);color:var(--faint)"></span>等待中`
+          : `<span class="dot led" style="background:var(--jade);color:var(--jade)"></span>空闲`))
+    : "—";
+  $("status").innerHTML = `
+    <div class="row"><span>会话</span><b>${sess ? esc(sess.sessionId.slice(0, 13)) + "…" : "—"}</b></div>
+    <div class="row"><span>状态</span><b>${stLed}</b></div>
+    <div class="row"><span>后台任务(lite)</span><b class="num">${lite} 次${s.lastLite ? " · " + fmt(s.lastLite.tokPerSec) + " tok/s" : ""}</b></div>
+    <div class="row"><span>最近更新</span><b>${s.lastRecordAgeMs != null ? Math.round(s.lastRecordAgeMs/1000) + "s 前" : "—"}</b></div>`;
+
+  // —— 7 天历史面板：选中会话 → 该会话过滤聚合；"全部" → 全局三块 ——
+  lastSnap = s;
+  curScope = sess && selectedSid != null
+    ? { scoped: true, name: sess.sessionId.slice(0, 13), sess }
+    : { scoped: false, name: "全部会话", sess };
+  const scopeSuffix = ` · ${curScope.name}`;
+  $("trendLabel").textContent = `速度趋势（吞吐加权 tok/s${scopeSuffix}）`;
+  $("modelsLabel").textContent = `模型对比（近 7 天${scopeSuffix}）`;
+  $("cacheLabel").textContent = `缓存分析（近 7 天，仅精确记录${scopeSuffix}）`;
+  renderTrend();
+  renderModels(curScope.scoped ? sess.models : s.models);
+  renderCache(curScope.scoped ? sess.cache : s.cache);
+}
+
+/* ---------------- 会话 tab 条（多会话，v0.3.0） ---------------- */
+function renderTabs(sessions) {
+  const el = $("sessTabs");
+  if (!sessions.length) { el.innerHTML = ""; el.style.display = "none"; return; }
+  el.style.display = "flex";
+  let html = `<button class="tab${selectedSid == null ? " active" : ""}" data-sid="">全部</button>`;
+  for (const x of sessions) {
+    const dot = x.generating ? "var(--amber-hi)" : "var(--jade)";
+    html += `<button class="tab${selectedSid === x.sessionId ? " active" : ""}" data-sid="${esc(x.sessionId)}">` +
+      `<span class="dot${x.generating ? " pulse" : ""}" style="background:${dot}"></span>${esc(x.sessionId.slice(0, 13))}</button>`;
+  }
+  el.innerHTML = html;
+}
+
+$("sessTabs").addEventListener("click", (e) => {
+  const btn = e.target.closest("button.tab");
+  if (!btn) return;
+  selectedSid = btn.dataset.sid || null; // 点 "全部" 恢复自动跟随
+  if (lastSnap) render(lastSnap);
+});
+
+/* ---------------- 趋势图（示波器：折线+面积+悬停读数） ---------------- */
+let lastSnap = null;
+let selectedSid = null; // null = "全部"（自动跟随最近活跃会话）
+let curScope = { scoped: false, name: "全部会话", sess: null }; // 分析面板当前口径
+let trendGran = "hour";
+let trendGeom = null; // { pts:[{fx,fy,tip}], lite:[…] } 供悬停读数定位
+function esc(x) { return String(x).replace(/[&<>"]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c])); }
+
+document.getElementById("trendTabs").addEventListener("click", (e) => {
+  const btn = e.target.closest(".tab");
+  if (!btn) return;
+  trendGran = btn.dataset.gran;
+  for (const b of document.querySelectorAll("#trendTabs .tab")) b.classList.toggle("active", b === btn);
+  renderTrend();
+});
+
+function renderTrend() {
+  const el = $("trend");
+  trendGeom = null;
+  hideTrendTip();
+  const s = lastSnap;
+  const trend = curScope.scoped && curScope.sess ? curScope.sess.trend : (s ? s.trend : null);
+  if (!s || !trend) {
+    el.innerHTML = `<div class="empty">暂无历史数据 —— 有请求后这里会绘制速度趋势线。</div>`;
+    return;
+  }
+  if (!curScope.scoped && s.store && s.store.backfilling) {
+    el.innerHTML = `<div class="empty">⏳ 首次启动，正在回填近 7 天历史…</div>`;
+    return;
+  }
+  const series = (trend[trendGran] || []);
+  const pts = series.filter(b => b.main && b.main.avg != null);
+  const litePts = series.filter(b => b.lite && b.lite.avg != null);
+  if (!pts.length && !litePts.length) {
+    el.innerHTML = curScope.scoped
+      ? `<div class="empty">会话 ${esc(curScope.name)} 近 7 天暂无记录。</div>`
+      : `<div class="empty">窗口内暂无数据（store 共 ${s.store ? s.store.count : 0} 条，可能都在窗口之外）。</div>`;
+    return;
+  }
+  const W = Math.max(320, el.clientWidth || 800), H = 180, PAD = 10;
+  const all = pts.concat(litePts);
+  const maxV = Math.max(...all.map(b => Math.max(b.main?.avg || 0, b.lite?.avg || 0)), 1);
+  const n = series.length;
+  const x = (i) => PAD + (i / (n - 1)) * (W - 2 * PAD);
+  const y = (v) => H - PAD - (v / maxV) * (H - 2 * PAD);
+  const lbl = (ms) => { const d = new Date(ms); return trendGran === "hour" ? `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,"0")}:00` : `${d.getMonth()+1}/${d.getDate()}`; };
+  // 网格线 + y 轴标注（0 / 半 / max）
+  let grid = "";
+  for (const fv of [0, 0.5, 1]) {
+    const gy = y(maxV * fv);
+    grid += `<line class="grid-l${fv === 0 ? " grid-base" : ""}" x1="${PAD}" y1="${gy}" x2="${W-PAD}" y2="${gy}"/>`;
+    grid += `<text x="${PAD+2}" y="${gy + (fv === 1 ? 12 : -4)}">${fmt(maxV * fv, 0)}</text>`;
+  }
+  const mk = (arr, key) => arr.map(b => {
+    const i = series.indexOf(b);
+    return { px: x(i), py: y(b[key].avg), fx: x(i) / W, fy: y(b[key].avg) / H, b };
+  });
+  let path = "";
+  if (pts.length) {
+    const P = mk(pts, "main");
+    const line = P.map((p, i) => `${i ? "L" : "M"}${p.px.toFixed(1)},${p.py.toFixed(1)}`).join("");
+    const area = line + `L${P[P.length-1].px.toFixed(1)},${H-PAD}L${P[0].px.toFixed(1)},${H-PAD}Z`;
+    path += `<path class="avg-area" d="${area}"/><path class="avg-line" pathLength="1" d="${line}"/>`;
+    for (const p of P) path += `<circle class="dot" cx="${p.px.toFixed(1)}" cy="${p.py.toFixed(1)}" r="3"/>`;
+    trendGeom = { pts: P.map(p => ({ fx: p.fx, fy: p.fy, tip: `<b>${fmt(p.b.main.avg)} tok/s</b> · ${p.b.main.n} 次 · ${esc(lbl(p.b.b))}` })), lite: [] };
+  }
+  if (litePts.length) {
+    const P = mk(litePts, "lite");
+    const line = P.map((p, i) => `${i ? "L" : "M"}${p.px.toFixed(1)},${p.py.toFixed(1)}`).join("");
+    path += `<path class="lite-line" d="${line}"/>`;
+    for (const p of P) path += `<circle class="dot-lite" cx="${p.px.toFixed(1)}" cy="${p.py.toFixed(1)}" r="2.5"/>`;
+    const geo = P.map(p => ({ fx: p.fx, fy: p.fy, tip: `<b>${fmt(p.b.lite.avg)} tok/s</b> · ${p.b.lite.n} 次 · ${esc(lbl(p.b.b))}` }));
+    if (trendGeom) trendGeom.lite = geo; else trendGeom = { pts: [], lite: geo };
+  }
+  // x 轴首尾标签
+  const first = series[0]?.b, lastB = series[series.length - 1]?.b;
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}">${grid}${path}</svg>` +
+    `<div class="xlab"><span>${esc(lbl(first))}</span><span>峰值 ${fmt(maxV, 0)} tok/s</span><span>${esc(lbl(lastB))}</span></div>`;
+}
+
+/* 悬停读数：就近吸附数据点，仪器式 crosshair 提示。
+   tip 挂在 trendWrap（不会被 SSE 重渲染冲掉），每次重绘先隐藏。 */
+let trendTip = null;
+function hideTrendTip() { if (trendTip) trendTip.style.display = "none"; }
+(() => {
+  const box = $("trendWrap");
+  box.addEventListener("pointermove", (e) => {
+    if (!trendGeom) return hideTrendTip();
+    const pool = trendGeom.pts.length ? trendGeom.pts : trendGeom.lite;
+    if (!pool || !pool.length) return hideTrendTip();
+    const rect = box.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    let best = pool[0];
+    for (const p of pool) if (Math.abs(p.fx * rect.width - mx) < Math.abs(best.fx * rect.width - mx)) best = p;
+    if (!trendTip) { trendTip = document.createElement("div"); trendTip.className = "trend-tip"; box.appendChild(trendTip); }
+    trendTip.innerHTML = best.tip;
+    trendTip.style.display = "block";
+    trendTip.style.left = Math.min(Math.max(best.fx * rect.width, 70), rect.width - 70) + "px";
+    trendTip.style.top = Math.max(best.fy * 180 - 12, 4) + "px";
+  });
+  box.addEventListener("pointerleave", hideTrendTip);
+  window.addEventListener("resize", () => { if (lastSnap) renderTrend(); });
+})();
+
+function renderModels(models) {
+  const el = $("models");
+  if (!models || !models.length) {
+    el.innerHTML = `<div class="empty">${curScope.scoped ? `会话 ${esc(curScope.name)} 暂无模型统计数据。` : "暂无模型统计数据。"}</div>`;
+    return;
+  }
+  const rows = models.map(m => {
+    const hitPct = m.cacheHit == null ? null : Math.round(m.cacheHit * 100);
+    return `<tr class="${m.role === "lite" ? "r-lite" : ""}">
+      <td class="mname" title="${esc(m.modelId)}">${esc(m.modelId)}</td>
+      <td><span class="role-tag">${m.role === "lite" ? "lite" : "main"}</span></td>
+      <td class="num">${m.n}</td>
+      <td class="num c-avg">${fmt(m.avg)}</td>
+      <td class="num">${fmt(m.p95)}</td>
+      <td class="num">${fmt(m.sumOut, 0)}</td>
+      <td class="num">${hitPct == null ? "—" : `${hitPct}%<span class="cmeter"><i style="width:${hitPct}%"></i></span>`}</td>
+    </tr>`;
+  }).join("");
+  el.innerHTML = `<table class="cmp">
+    <thead><tr><th>模型</th><th>角色</th><th>请求数</th><th>avg tok/s</th><th>p95 tok/s</th><th>Σ output</th><th>缓存命中</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>
+  <div class="sub" style="margin-top:8px">avg 为吞吐加权（Σtokens ÷ Σduration）；p95 来自逐条速度分布；缓存命中仅统计带精确 usage 的请求。</div>`;
+}
+
+function renderCache(c) {
+  const el = $("cache");
+  const s = lastSnap;
+  if (!c || c.sumInput === 0) {
+    $("cacheNote").textContent = "";
+    el.innerHTML = `<div class="empty">${curScope.scoped ? `会话 ${esc(curScope.name)} 暂无精确 usage 记录。` : "暂无 usage 数据 —— 缓存命中率需要 rollout 的精确 usage 字段。"}</div>`;
+    return;
+  }
+  const pct = (v) => (v * 100).toFixed(1) + "%";
+  const wan = (n) => n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(n);
+  el.innerHTML = `<div class="cache-wrap">
+    <div class="hit-block">
+      <b>${pct(c.hit)}</b>
+      <div class="hmeter"><i style="width:${pct(c.hit)}"></i></div>
+      <span>缓存命中率 · cacheRead ÷ input</span>
+    </div>
+    <div class="kpi"><b>${wan(c.sumCacheRead)}</b><span>Σ cacheRead tokens（命中省下的输入）</span></div>
+    <div class="kpi"><b>${wan(c.sumCacheWrite)}</b><span>Σ cacheWrite tokens</span></div>
+    <div class="kpi"><b>${wan(c.sumInput)}</b><span>Σ 输入 tokens</span></div>
+    <div class="kpi"><b>${fmt(c.avgInput, 0)}</b><span>平均输入 / 请求</span></div>
+  </div>`;
+  $("cacheNote").textContent = curScope.scoped
+    ? `口径：仅会话 ${curScope.name} 的记录（近 7 天）；无法归属会话的记录不参与过滤。`
+    : `口径：inputTokens 已包含 cacheReadTokens（实测 usage 校验）；近 7 天共 ${s.store ? s.store.count : 0} 条记录参与聚合${s.store && s.store.backfilling ? " · ⏳ 历史回填中" : ""}。`;
+}
+
+function connect() {
+  const es = new EventSource("/events");
+  es.addEventListener("state", (e) => { try { render(JSON.parse(e.data)); } catch {} });
+  es.onerror = () => { setConn(false, "断线，自动重连…"); };
+}
+
+/* 磷光绘入只跑一次，之后 SSE 重渲染不再触发 */
+document.body.classList.add("boot");
+setTimeout(() => document.body.classList.remove("boot"), 1600);
+
+fetch("/api/state").then(r => r.json()).then(render).catch(() => {});
+connect();
+</script>
+</body>
+</html>
