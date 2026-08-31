@@ -1,10 +1,10 @@
-// zcode-metrics · Hook 子进程：幂等保活收集器 + 转发 hook 事件
+// zcode-metrics · Hook 子进程：幂等保活收集器 + 转发 hook 事件 + 升级接管
 // 用法：node ensure.mjs <kind> [openDashboard]   （stdin: hook JSON 一行）
-// 预算：fetch 400ms + spawn 后等待 ≤700ms，总时长 < hooks.json timeoutMs(1500/3000)。
+// 预算：fetch 400ms + spawn 后等待 ≤700ms；接管路径额外 ≤(1500+500)ms，总时长 < hooks.json timeoutMs(1500/3000)。
 // 纪律：stdout 只输出一行 "{}"（不向模型注入任何内容），诊断走 stderr，任何异常退出码 0。
 import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { openSync, mkdirSync, closeSync } from "node:fs";
+import { openSync, mkdirSync, closeSync, readFileSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
@@ -15,6 +15,16 @@ const DATA_DIR =
   process.env.ZCODE_PLUGIN_DATA ||
   path.join(os.homedir(), ".zcode", "plugin-data", "zcode-metrics");
 const PORT_FILE = path.join(DATA_DIR, "port.json");
+
+// 本 hook 随插件分发：版本以 plugin.json 为唯一事实源，与 server /health 同源可比
+function ownVersion() {
+  try {
+    const m = JSON.parse(readFileSync(path.join(__dirname, "..", ".zcode-plugin", "plugin.json"), "utf8"));
+    if (typeof m.version === "string" && m.version) return m.version;
+  } catch { /* ignore */ }
+  return "0.0.0";
+}
+const OWN_VERSION = ownVersion();
 
 const kind = process.argv[2] || "user_prompt_submit";
 // 第三个参数来自 hooks.json 的 ${user_config.openDashboard} 模板替换
@@ -46,15 +56,52 @@ function portFile() {
   return readFile(PORT_FILE, "utf8").then((s) => JSON.parse(s)).catch(() => null);
 }
 
-async function serverAlive() {
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function pidAlive(pid) {
+  if (!pid) return false;
+  try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
+async function waitPidGone(pid, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!pidAlive(pid)) return true;
+    await sleep(60);
+  }
+  return !pidAlive(pid);
+}
+
+// 探活 + 取版本：返回 { port, version }（version 可能为 ""，即老版本无 /health version 字段）；不健康返回 null
+async function probeServer() {
   const pf = await portFile();
   if (!pf || !pf.port) return null;
-  try { process.kill(pf.pid, 0); } catch { return null; } // pid 死了直接重拉
+  if (!pidAlive(pf.pid)) return null; // pid 死了直接重拉
   try {
     const res = await fetchJson(`http://127.0.0.1:${pf.port}/health`, {}, 400);
-    if (res.ok) return pf.port;
+    if (res.ok) {
+      const h = await res.json().catch(() => ({}));
+      return { port: pf.port, version: typeof h.version === "string" ? h.version : "" };
+    }
   } catch { /* fallthrough */ }
   return null;
+}
+
+// 升级接管：请旧实例退出。优先带 token 走 /shutdown（协作式，自清 port.json）；
+// 旧版本无此端点/无 token/超时 → SIGTERM 兜底。全程有硬预算，超时不阻塞 hook。
+async function shutdownOldInstance(pf) {
+  if (pf.shutdownToken && pf.port) {
+    try {
+      await fetchJson(
+        `http://127.0.0.1:${pf.port}/shutdown`,
+        { method: "POST", headers: { "X-Shutdown-Token": pf.shutdownToken } },
+        400
+      );
+    } catch { /* 旧版无端点：直接走 SIGTERM */ }
+    if (await waitPidGone(pf.pid, 600)) return;
+  }
+  try { process.kill(pf.pid, "SIGTERM"); } catch { /* 已退出 */ }
+  await waitPidGone(pf.pid, 400);
 }
 
 let spawned = false;
@@ -95,6 +142,17 @@ async function postEvent(port, payload) {
   }
 }
 
+async function ensureUpToDate() {
+  // 返回可用端口；探活命中且版本一致 → 复用；版本落后（含老进程无 version 字段）→ 接管后重开
+  const probe = await probeServer();
+  if (!probe) return null; // 不健康：交给冷启动 spawn
+  if (probe.version === OWN_VERSION) return probe.port; // 版本一致：复用，不重启（多会话共用同一 daemon）
+  // 版本不符：旧进程 serve 的是旧代码/旧页面，接管（关旧 → 起新，端口回到基准最低空闲位）
+  const pf = await portFile();
+  if (pf && pf.pid) await shutdownOldInstance(pf);
+  return null; // 触发冷启动 spawn
+}
+
 async function main() {
   const raw = await readStdin();
   let input = {};
@@ -111,15 +169,15 @@ async function main() {
     payload.lastAssistantMessage = input.last_assistant_message;
   }
 
-  let port = await serverAlive();
+  let port = await ensureUpToDate();
   if (!port) {
     spawnServer();
     // 等待就绪：≤700ms 轮询 port 文件 + /health
     const deadline = Date.now() + 700;
     while (Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 80));
-      port = await serverAlive();
-      if (port) break;
+      await sleep(80);
+      const probe = await probeServer();
+      if (probe && probe.version === OWN_VERSION) { port = probe.port; break; }
     }
     if (!port) return; // server 起不来：静默退出（exit 0 = 会话无感知）
   }

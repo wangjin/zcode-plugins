@@ -3,16 +3,27 @@
 import http from "node:http";
 import { spawn } from "node:child_process";
 import { readFile, writeFile, appendFile } from "node:fs/promises";
-import { watch, mkdirSync, unlinkSync } from "node:fs";
+import { watch, mkdirSync, unlinkSync, readFileSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { RolloutTail, ROLLOUT_DIR } from "./rollout.mjs";
 import { newState, applyEvent, applyRecord, tick, snapshot } from "./state.mjs";
 import { createStore, encodeRow, decodeRow, WINDOW_MS } from "./store.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const VERSION = "0.3.0";
+// 版本以插件 manifest 为唯一事实源（避免硬编码常量与 plugin.json 漂移，误导 hook 的版本比较）
+function readPluginVersion() {
+  try {
+    const m = JSON.parse(readFileSync(path.join(__dirname, "..", ".zcode-plugin", "plugin.json"), "utf8"));
+    if (typeof m.version === "string" && m.version) return m.version;
+  } catch { /* manifest 缺失/损坏 → 兜底 */ }
+  return "0.0.0";
+}
+const VERSION = readPluginVersion();
+// 接管凭据：hook 关闭旧实例时须带此 token（仅经本机 port.json 传递，进程每次启动随机生成）
+const SHUTDOWN_TOKEN = randomUUID();
 const BASE_PORT = Number(process.env.TSD_PORT || 4521);
 const PORT_TRIES = 10;
 const DATA_DIR =
@@ -171,6 +182,14 @@ const httpServer = http.createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/health") {
       return send(200, "application/json", JSON.stringify({ ok: true, pid: process.pid, port: state.server.port, version: VERSION }));
     }
+    if (req.method === "POST" && url.pathname === "/shutdown") {
+      // 仅接受持有本机 port.json token 的调用方（hook 升级接管）；token 每次进程启动随机
+      const token = req.headers["x-shutdown-token"];
+      if (!token || token !== SHUTDOWN_TOKEN) return send(403, "application/json", '{"ok":false,"error":"bad token"}');
+      send(200, "application/json", '{"ok":true}');
+      setTimeout(cleanup, 50); // 让响应先 flush
+      return;
+    }
     if (req.method === "GET" && url.pathname === "/api/state") {
       return send(200, "application/json", JSON.stringify(snapshot(state, Date.now(), store)));
     }
@@ -229,7 +248,7 @@ listenWithRetry()
     state.server.port = port;
     try { mkdirSync(DATA_DIR, { recursive: true }); } catch {}
     try {
-      await writeFile(PORT_FILE, JSON.stringify({ port, pid: process.pid, startedAt: new Date().toISOString(), version: VERSION }));
+      await writeFile(PORT_FILE, JSON.stringify({ port, pid: process.pid, startedAt: new Date().toISOString(), version: VERSION, shutdownToken: SHUTDOWN_TOKEN }));
     } catch (e) {
       console.error("[tsd] port file write failed:", e && e.message);
     }
