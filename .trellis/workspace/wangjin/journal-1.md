@@ -26,3 +26,24 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 2: 添加仓库根 README
+
+**Date**: 2026-08-31
+**Task**: 添加仓库根 README
+**Branch**: `main`
+
+### Summary
+
+为 zcode-local-dev 插件市场仓库新增根 README.md：仓库定位与目录结构、已收录插件（zcode-metrics v0.4.0）、本地市场安装步骤、开发约定（marketplace.json 登记、测试命令、数据清理）。已提交 cce3f63。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `cce3f63` | (see git log) |
+
+### Status
+
+[OK] **Completed**
