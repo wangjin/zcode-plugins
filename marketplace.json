@@ -1,0 +1,19 @@
+{
+  "name": "zcode-local-dev",
+  "description": "本地开发插件市场（zcode-metrics）",
+  "plugins": [
+    {
+      "name": "zcode-metrics",
+      "source": "./plugins/zcode-metrics",
+      "description": "本地网页仪表盘实时显示 ZCode 会话的模型输出速度（tok/s），多会话并行统计与按会话过滤分析",
+      "version": "0.3.0",
+      "category": "utility",
+      "tags": [
+        "token",
+        "speed",
+        "monitor",
+        "dashboard"
+      ]
+    }
+  ]
+}
