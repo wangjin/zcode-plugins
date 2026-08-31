@@ -1,6 +1,6 @@
-# zcode-local-dev
+# zcode-toolbox
 
-ZCode 本地开发插件市场仓库：集中托管自研 ZCode 插件，并通过根目录的 `marketplace.json` 作为一个"个人插件市场"直接被 ZCode 客户端加载。
+ZCode 本地插件市场仓库：集中托管自研 ZCode 效率工具插件，并通过根目录的 `marketplace.json` 作为一个"个人插件市场"直接被 ZCode 客户端加载。
 
 ## 仓库结构
 

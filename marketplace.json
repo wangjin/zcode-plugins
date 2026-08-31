@@ -1,6 +1,6 @@
 {
-  "name": "zcode-local-dev",
-  "description": "本地开发插件市场（zcode-metrics）",
+  "name": "zcode-toolbox",
+  "description": "ZCode 效率工具插件集（zcode-metrics）",
   "plugins": [
     {
       "name": "zcode-metrics",
