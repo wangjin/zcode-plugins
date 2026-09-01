@@ -107,8 +107,25 @@
   }
   .tab:hover { color: var(--text); border-color: var(--faint); }
   .tab.active { color: var(--amber-hi); border-color: rgba(242,166,75,.45); background: var(--amber-soft); }
-  #sessTabs { display: none; gap: 8px; flex-wrap: wrap; align-items: center; }
-  #sessTabs .tab { font-size: 12px; padding: 4px 13px; }
+
+  /* ————— 会话总览列表（多会话同屏，v0.6.0） ————— */
+  .sess-list { display: flex; flex-direction: column; margin-top: 2px; }
+  .srow {
+    display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto;
+    align-items: center; gap: 10px; width: 100%; text-align: left;
+    background: transparent; border: 1px solid transparent; border-radius: 8px;
+    padding: 6px 9px; cursor: pointer; color: var(--text);
+    transition: background .15s, border-color .15s;
+  }
+  .srow:hover { background: var(--panel-hi); }
+  .srow.sel { background: var(--amber-soft); border-color: rgba(242,166,75,.4); }
+  .srow + .srow { margin-top: 2px; }
+  .srow .sid { font: 600 12.5px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .srow .sread { font: 600 12.5px var(--mono); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+  .srow .sread i { font-style: normal; font-weight: 400; color: var(--dim); font-size: 10.5px; }
+  .srow .sread.gen { color: var(--amber-hi); text-shadow: 0 0 14px rgba(255,198,110,.3); }
+  .srow .sago { color: var(--faint); font: 11px var(--mono); min-width: 46px; text-align: right; white-space: nowrap; }
+  .srow .dot { margin: 0; }
 
   /* ————— 趋势示波器 ————— */
   #trendWrap { position: relative; }
@@ -189,8 +206,8 @@
       display: flex; flex-direction: column; padding: 16px 22px 10px;
     }
     header { flex: none; margin-bottom: 12px; }
-    #sessTabs { flex: none; }
-    #sessTabs:not(:empty) { margin-bottom: 12px; }
+    .p-sess #sessList { flex: 1 1 auto; min-height: 0; max-height: 162px; overflow-y: auto; }
+    .p-sess #sessFoot { flex: none; }
     main {
       flex: 1 1 auto; min-height: 0; gap: 12px;
       display: grid;
@@ -223,7 +240,10 @@
     .p-trnd .legend { flex: none; margin-top: 6px; }
 
     .p-modl #models { flex: 1 1 auto; min-height: 0; overflow: auto; }
-    .p-cach #cache { flex: 1 1 auto; min-height: 0; display: flex; align-items: center; flex-wrap: wrap; }
+    .p-cach #cache { flex: 1 1 auto; min-height: 0; display: flex; align-items: center; flex-wrap: wrap; overflow: hidden auto; }
+    .p-cach .cache-wrap { gap: 16px; }
+    .p-cach .hit-block { min-width: 178px; padding-right: 16px; }
+    .p-cach .kpi b { font-size: 19px; }
     .p-cach #cacheNote { flex: none; }
 
     footer { grid-area: foot; margin-top: 0; padding-top: 6px; flex: none; }
@@ -257,8 +277,6 @@
   </div>
 </header>
 
-<nav id="sessTabs" aria-label="会话切换"></nav>
-
 <main>
   <div class="grid">
     <div class="panel p-last">
@@ -269,7 +287,7 @@
     </div>
     <div class="panel p-turn">
       <div class="eyebrow">Readout · Turn</div>
-      <div class="label">本轮累计</div>
+      <div class="label" id="turnLabel">本轮累计</div>
       <div class="big" id="turnNum">—<span class="unit">tok/s</span></div>
       <div class="sub" id="turnSub">本轮尚未开始</div>
     </div>
@@ -296,9 +314,15 @@
       <div id="detail"><div class="label">最近请求详情</div><div class="sub">—</div></div>
     </div>
     <div class="panel p-sess">
-      <div class="eyebrow">Session</div>
-      <div class="label">会话状态</div>
-      <div id="status" style="margin-top:6px"></div>
+      <div class="p-head">
+        <div>
+          <div class="eyebrow">Sessions</div>
+          <div class="label" id="sessLabel">会话总览</div>
+        </div>
+        <button class="tab" id="scopeAll" title="退出聚焦，回到自动跟随最近活跃会话">全部</button>
+      </div>
+      <div class="sess-list" id="sessList"><div class="empty">暂无活跃会话。</div></div>
+      <div class="sub" id="sessFoot" style="margin-top:8px"></div>
     </div>
   </div>
 
@@ -368,7 +392,7 @@ function render(s) {
   const sessions = s.sessions || [];
   if (selectedSid != null && !sessions.some((x) => x.sessionId === selectedSid)) selectedSid = null;
   const sess = selectedSid != null ? sessions.find((x) => x.sessionId === selectedSid) : (sessions[0] || null);
-  renderTabs(sessions);
+  renderSessions(s, sessions, sess);
 
   // 大数字卡：所选会话 生成中 vs 最近完成
   if (sess && sess.generating) {
@@ -412,7 +436,7 @@ function render(s) {
     }).join("");
   }
 
-  // 详情 & 状态（所选会话；lite 为全局口径）
+  // 详情 & 会话列表（所选会话；lite 为全局口径）
   const l = sess ? sess.last : null;
   $("detail").innerHTML = `<div class="label">最近请求详情</div>` + (l ? `
     <div class="row"><span>模型</span><b>${l.modelId}</b></div>
@@ -422,19 +446,10 @@ function render(s) {
     <div class="row"><span>完成于</span><b>${new Date(l.completedAtMs).toLocaleTimeString("zh-CN")}</b></div>`
     : `<div class="sub">—</div>`);
 
-  const lite = s.liteCount || 0;
-  const stLed = sess
-    ? (sess.generating
-        ? `<span class="dot led" style="background:var(--amber-hi);color:var(--amber-hi)"></span>生成中`
-        : (sess.stale
-          ? `<span class="dot led" style="background:var(--faint);color:var(--faint)"></span>等待中`
-          : `<span class="dot led" style="background:var(--jade);color:var(--jade)"></span>空闲`))
-    : "—";
-  $("status").innerHTML = `
-    <div class="row"><span>会话</span><b>${sess ? esc(sess.sessionId.slice(0, 13)) + "…" : "—"}</b></div>
-    <div class="row"><span>状态</span><b>${stLed}</b></div>
-    <div class="row"><span>后台任务(lite)</span><b class="num">${lite} 次${s.lastLite ? " · " + fmt(s.lastLite.tokPerSec) + " tok/s" : ""}</b></div>
-    <div class="row"><span>最近更新</span><b>${s.lastRecordAgeMs != null ? Math.round(s.lastRecordAgeMs/1000) + "s 前" : "—"}</b></div>`;
+  // 大数字卡标注口径会话：任何时刻都能看出读数属于哪个窗口
+  const sidTag = sess ? ` · ${sess.sessionId.slice(0, 13)}` : "";
+  $("heroLabel").textContent += sidTag;
+  $("turnLabel").textContent = "本轮累计" + sidTag;
 
   // —— 7 天历史面板：选中会话 → 该会话过滤聚合；"全部" → 全局三块 ——
   lastSnap = s;
@@ -450,24 +465,54 @@ function render(s) {
   renderCache(curScope.scoped ? sess.cache : s.cache);
 }
 
-/* ---------------- 会话 tab 条（多会话，v0.3.0） ---------------- */
-function renderTabs(sessions) {
-  const el = $("sessTabs");
-  if (!sessions.length) { el.innerHTML = ""; el.style.display = "none"; return; }
-  el.style.display = "flex";
-  let html = `<button class="tab${selectedSid == null ? " active" : ""}" data-sid="">全部</button>`;
-  for (const x of sessions) {
-    const dot = x.generating ? "var(--amber-hi)" : "var(--jade)";
-    html += `<button class="tab${selectedSid === x.sessionId ? " active" : ""}" data-sid="${esc(x.sessionId)}">` +
-      `<span class="dot${x.generating ? " pulse" : ""}" style="background:${dot}"></span>${esc(x.sessionId.slice(0, 13))}</button>`;
+/* ---------------- 会话总览列表（多会话同屏，v0.6.0） ----------------
+   所有会话一眼看全：状态灯 + ID + 实时读数 + 最近活跃；
+   点行 = 聚焦该会话（分析面板跟随），再点同一行或「全部」= 回到自动跟随。 */
+function fmtAge(ms) {
+  const sec = Math.max(0, Math.round(ms / 1000));
+  if (sec < 60) return `${sec}s前`;
+  if (sec < 3600) return `${Math.floor(sec / 60)}m前`;
+  return `${Math.floor(sec / 3600)}h前`;
+}
+function renderSessions(s, sessions, sel) {
+  $("scopeAll").classList.toggle("active", selectedSid == null);
+  $("sessLabel").textContent = `会话总览（${sessions.length}/5）`;
+  const el = $("sessList");
+  if (!sessions.length) {
+    el.innerHTML = `<div class="empty">暂无活跃会话 —— 在 ZCode 里发一条消息就会上线。</div>`;
+  } else {
+    el.innerHTML = sessions.map((x) => {
+      const on = sel && sel.sessionId === x.sessionId;
+      const led = x.generating ? "var(--amber-hi)" : x.stale ? "var(--faint)" : "var(--jade)";
+      let read = "—", cls = "";
+      if (x.generating) {
+        cls = " gen";
+        read = `${fmt(x.turn.avgTokPerSec)} <i>tok/s</i>${x.turn.tokens > 0 ? ` · Σ${x.turn.tokens}` : ""}`;
+      } else if (x.last) {
+        read = `${fmt(x.last.tokPerSec)} <i>tok/s</i>`;
+      }
+      return `<button class="srow${on ? " sel" : ""}" data-sid="${esc(x.sessionId)}" aria-pressed="${on}" title="${esc(x.sessionId)}">` +
+        `<span class="dot led${x.generating ? " pulse" : ""}" style="background:${led};color:${led}"></span>` +
+        `<span class="sid">${esc(x.sessionId.slice(0, 13))}</span>` +
+        `<span class="sread${cls}">${read}</span>` +
+        `<span class="sago">${fmtAge(s.now - x.lastEventMs)}</span></button>`;
+    }).join("");
   }
-  el.innerHTML = html;
+  const lite = s.liteCount || 0;
+  $("sessFoot").textContent = `后台任务(lite) ${lite} 次` +
+    (s.lastLite ? ` · ${fmt(s.lastLite.tokPerSec)} tok/s` : "") +
+    (s.lastRecordAgeMs != null ? ` · 最近更新 ${Math.round(s.lastRecordAgeMs / 1000)}s 前` : "");
 }
 
-$("sessTabs").addEventListener("click", (e) => {
-  const btn = e.target.closest("button.tab");
+$("sessList").addEventListener("click", (e) => {
+  const btn = e.target.closest("button.srow");
   if (!btn) return;
-  selectedSid = btn.dataset.sid || null; // 点 "全部" 恢复自动跟随
+  const sid = btn.dataset.sid;
+  selectedSid = selectedSid === sid ? null : sid; // 再点已聚焦的行 = 取消聚焦
+  if (lastSnap) render(lastSnap);
+});
+$("scopeAll").addEventListener("click", () => {
+  selectedSid = null;
   if (lastSnap) render(lastSnap);
 });
 
