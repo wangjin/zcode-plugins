@@ -50,16 +50,8 @@
   .tabs { display: flex; gap: 6px; flex-shrink: 0; }
 
   /* ————— 读数 ————— */
-  .big {
-    font: 600 44px/1.12 var(--mono); font-variant-numeric: tabular-nums;
-    color: var(--amber); text-shadow: 0 0 26px rgba(242,166,75,.22);
-    margin: 2px 0 4px;
-  }
-  #turnNum { color: var(--text); text-shadow: none; }
-  .unit { font-size: 15px; color: var(--dim); font-weight: 400; margin-left: 6px; letter-spacing: .02em; }
   .sub { color: var(--dim); font-size: 12px; margin-top: 4px; }
   .sub b { font-weight: 600; color: var(--text); }
-  .gen { color: var(--amber-hi); font-weight: 600; text-shadow: 0 0 18px rgba(255,198,110,.35); }
   .pulse { animation: pulse 1.2s ease-in-out infinite; }
   @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
   .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
@@ -117,11 +109,10 @@
   .tab:hover { color: var(--text); border-color: var(--faint); }
   .tab.active { color: var(--amber-hi); border-color: rgba(242,166,75,.45); background: var(--amber-soft); }
 
-  /* ————— 会话总览列表（多会话同屏，v0.6.0） ————— */
+  /* ————— 会话总览列表（多会话同屏，v0.6.0；v0.9.0 两行式行卡） ————— */
   .sess-list { display: flex; flex-direction: column; margin-top: 2px; }
   .srow {
-    display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto;
-    align-items: center; gap: 10px; width: 100%; text-align: left;
+    display: flex; align-items: flex-start; gap: 9px; width: 100%; text-align: left;
     background: transparent; border: 1px solid transparent; border-radius: 8px;
     padding: 6px 9px; cursor: pointer; color: var(--text);
     transition: background .15s, border-color .15s;
@@ -129,12 +120,16 @@
   .srow:hover { background: var(--panel-hi); }
   .srow.sel { background: var(--amber-soft); border-color: rgba(242,166,75,.4); }
   .srow + .srow { margin-top: 2px; }
-  .srow .sid { font: 600 12.5px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .srow .sread { font: 600 12.5px var(--mono); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+  .srow .dot { margin: 4px 0 0; }
+  .srow .smain { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  .srow .l1 { display: flex; align-items: baseline; gap: 10px; }
+  .srow .sid { font: 600 12.5px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }
+  .srow .sread { margin-left: auto; font: 600 12.5px var(--mono); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
   .srow .sread i { font-style: normal; font-weight: 400; color: var(--dim); font-size: 10.5px; }
   .srow .sread.gen { color: var(--amber-hi); text-shadow: 0 0 14px rgba(255,198,110,.3); }
-  .srow .sago { color: var(--faint); font: 11px var(--mono); min-width: 46px; text-align: right; white-space: nowrap; }
-  .srow .dot { margin: 0; }
+  .srow .sago { color: var(--faint); font: 11px var(--mono); flex: none; white-space: nowrap; }
+  .srow .l2 { color: var(--faint); font: 10.5px var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .srow .l2 b { color: var(--dim); font-weight: 600; }
 
   /* ————— 趋势示波器 ————— */
   #trendWrap { position: relative; }
@@ -220,7 +215,7 @@
       display: flex; flex-direction: column; padding: 16px 22px 10px;
     }
     header { flex: none; margin-bottom: 12px; }
-    .p-sess #sessList { flex: 1 1 auto; min-height: 0; max-height: 162px; overflow-y: auto; }
+    .p-sess #sessList { flex: 1 1 auto; min-height: 0; max-height: 240px; overflow-y: auto; }
     .p-sess #sessFoot { flex: none; }
     main {
       flex: 1 1 auto; min-height: 0; gap: 12px;
@@ -228,20 +223,18 @@
       grid-template-columns: repeat(12, 1fr);
       grid-template-rows: auto minmax(0, 13fr) minmax(0, 10fr) auto;
       grid-template-areas:
-        "last last last turn turn turn sess sess sess det  det  det"
+        "sess sess sess sess sess sess sess sess det  det  det  det"
         "trnd trnd trnd trnd trnd trnd strm strm strm strm strm strm"
         "modl modl modl modl modl modl modl cach cach cach cach cach"
         "foot foot foot foot foot foot foot  foot foot foot foot foot";
     }
     main .grid { display: contents; }  /* 拆掉两列包装，子面板直接进全屏 Grid */
     main .panel { display: flex; flex-direction: column; min-height: 0; padding: 13px 15px; }
-    .p-last { grid-area: last; } .p-turn { grid-area: turn; }
     .p-sess { grid-area: sess; } .p-det  { grid-area: det; }
     .p-strm { grid-area: strm; } .p-trnd { grid-area: trnd; }
     .p-modl { grid-area: modl; overflow: hidden; } .p-cach { grid-area: cach; }
 
-    .big { font-size: 40px; margin: 0 0 2px; }
-    .p-det .row, .p-sess .row { padding: 4px 0; }
+    .p-det .row { padding: 4px 0; }
 
     /* 柱图：条形区吃掉面板剩余高度 */
     .p-strm #hist { flex: 1 1 auto; height: auto; min-height: 56px; }
@@ -267,7 +260,6 @@
     body { padding: 18px 14px 24px; }
     .grid { grid-template-columns: 1fr; }
     header { flex-direction: column; align-items: flex-start; }
-    .big { font-size: 36px; }
     .hit-block { border-right: none; padding-right: 0; border-bottom: 1px solid var(--line); padding-bottom: 14px; min-width: 0; }
     .cache-wrap { gap: 18px; }
   }
@@ -292,21 +284,6 @@
 </header>
 
 <main>
-  <div class="grid">
-    <div class="panel p-last">
-      <div class="eyebrow">Readout · Last</div>
-      <div class="label" id="heroLabel">最近一次请求</div>
-      <div class="big" id="heroNum">—<span class="unit">tok/s</span></div>
-      <div class="sub" id="heroSub">等待模型响应…</div>
-    </div>
-    <div class="panel p-turn">
-      <div class="eyebrow">Readout · Turn</div>
-      <div class="label" id="turnLabel">本轮累计</div>
-      <div class="big" id="turnNum">—<span class="unit">tok/s</span></div>
-      <div class="sub" id="turnSub">本轮尚未开始</div>
-    </div>
-  </div>
-
   <div class="panel p-strm">
     <div class="p-head">
       <div>
@@ -409,35 +386,6 @@ function render(s) {
   const sess = selectedSid != null ? sessions.find((x) => x.sessionId === selectedSid) : (sessions[0] || null);
   renderSessions(s, sessions, sess);
 
-  // 大数字卡：所选会话 生成中 vs 最近完成
-  if (sess && sess.generating) {
-    $("heroLabel").textContent = "当前状态";
-    $("heroNum").innerHTML = `<span class="gen pulse">生成中…</span>`;
-    const t = sess.turn || {};
-    $("heroSub").innerHTML = `已耗时 <b class="num">${secs(t.elapsedMs || 0)}</b>` +
-      (t.tokens > 0 ? ` · 本轮已产出 <b class="num">${t.tokens}</b> tok（平均 <b class="num">${fmt(t.avgTokPerSec)}</b> tok/s）` : ` · 本次响应完成后刷新速度`);
-  } else if (sess && sess.last) {
-    $("heroLabel").textContent = "最近一次请求";
-    $("heroNum").innerHTML = `${fmt(sess.last.tokPerSec)}<span class="unit">tok/s</span>`;
-    $("heroSub").textContent = `${sess.last.modelId} · ${sess.last.outputTokens} tok ÷ ${(sess.last.durationMs/1000).toFixed(1)}s${sess.last.source === "estimate" ? "（估算）" : ""}`;
-  } else {
-    $("heroLabel").textContent = "最近一次请求";
-    $("heroNum").innerHTML = `—<span class="unit">tok/s</span>`;
-    $("heroSub").textContent = sess && sess.stale ? "已超时未收到新请求" : "等待模型响应…";
-  }
-
-  // 本轮累计（所选会话）
-  if (sess && sess.generating && sess.turn && sess.turn.tokens > 0) {
-    $("turnNum").innerHTML = `${fmt(sess.turn.avgTokPerSec)}<span class="unit">tok/s</span>`;
-    $("turnSub").innerHTML = `Σ ${sess.turn.tokens} tok · ${sess.turn.requests} 次请求 · 历时 ${secs(sess.turn.elapsedMs)}`;
-  } else if (sess && !sess.generating && sess.closed && (sess.closed.tokens > 0)) {
-    $("turnNum").innerHTML = `${fmt(sess.closed.avgTokPerSec)}<span class="unit">tok/s</span>`;
-    $("turnSub").innerHTML = `上一轮：Σ ${sess.closed.tokens} tok · ${sess.closed.requests} 次请求 · ${secs(sess.closed.durationSec*1000)}${sess.closed.estimated ? "（估算）" : ""}`;
-  } else {
-    $("turnNum").innerHTML = `—<span class="unit">tok/s</span>`;
-    $("turnSub").textContent = sess && sess.generating ? "本轮首次请求完成后可见" : "本轮尚未开始";
-  }
-
   // 历史条形图
   const h = s.history || [];
   if (!h.length) {
@@ -461,11 +409,6 @@ function render(s) {
     <div class="row"><span>完成于</span><b>${new Date(l.completedAtMs).toLocaleTimeString("zh-CN")}</b></div>`
     : `<div class="sub">—</div>`);
 
-  // 大数字卡标注口径会话：任何时刻都能看出读数属于哪个窗口
-  const sidTag = sess ? ` · ${sess.sessionId.slice(0, 13)}` : "";
-  $("heroLabel").textContent += sidTag;
-  $("turnLabel").textContent = "本轮累计" + sidTag;
-
   // —— 7 天历史面板：选中会话 → 该会话过滤聚合；"全部" → 全局三块 ——
   lastSnap = s;
   curScope = sess && selectedSid != null
@@ -480,8 +423,9 @@ function render(s) {
   renderCache(curScope.scoped ? sess.cache : s.cache);
 }
 
-/* ---------------- 会话总览列表（多会话同屏，v0.6.0） ----------------
-   所有会话一眼看全：状态灯 + ID + 实时读数 + 最近活跃；
+/* ---------------- 会话总览列表（多会话同屏，v0.6.0；v0.9.0 行内承载实时详情） ----------------
+   每行两行式：首行 = 状态灯 + 短 ID + 实时读数 + 最近活跃；
+   次行 = 该会话的实时上下文（生成中：本轮进度；空闲：最近请求 + 上一轮摘要）。
    点行 = 聚焦该会话（分析面板跟随），再点同一行或「全部」= 回到自动跟随。 */
 function fmtAge(ms) {
   const sec = Math.max(0, Math.round(ms / 1000));
@@ -499,18 +443,24 @@ function renderSessions(s, sessions, sel) {
     el.innerHTML = sessions.map((x) => {
       const on = sel && sel.sessionId === x.sessionId;
       const led = x.generating ? "var(--amber-hi)" : x.stale ? "var(--faint)" : "var(--jade)";
-      let read = "—", cls = "";
+      let read = "—", cls = "", sub = `<span class="l2">等待首个请求…</span>`;
       if (x.generating) {
         cls = " gen";
-        read = `${fmt(x.turn.avgTokPerSec)} <i>tok/s</i>${x.turn.tokens > 0 ? ` · Σ${x.turn.tokens}` : ""}`;
+        read = `${fmt(x.turn.avgTokPerSec)} <i>tok/s</i>`;
+        sub = `<span class="l2">本轮 <b>${x.turn.requests}</b> 次 · Σ<b>${fmt(x.turn.tokens, 0)}</b> tok · 已 <b>${secs(x.turn.elapsedMs || 0)}</b>${x.last ? ` · ${esc(shortModel(x.last.modelId))}` : ""}</span>`;
       } else if (x.last) {
-        read = `${fmt(x.last.tokPerSec)} <i>tok/s</i>`;
+        read = `${fmt(x.last.tokPerSec)} <i>tok/s</i>${x.last.source === "estimate" ? ` <i>估</i>` : ""}`;
+        sub = `<span class="l2">最近 ${esc(shortModel(x.last.modelId))} · <b>${x.last.outputTokens}</b> tok / ${(x.last.durationMs / 1000).toFixed(1)}s` +
+          (x.closed && x.closed.tokens > 0 ? ` · 上一轮 Σ<b>${fmt(x.closed.tokens, 0)}</b>/<b>${x.closed.requests}</b>次` : "") + `</span>`;
+      } else if (x.closed && x.closed.tokens > 0) {
+        sub = `<span class="l2">上一轮 Σ<b>${fmt(x.closed.tokens, 0)}</b> tok · <b>${x.closed.requests}</b> 次 · ${secs(x.closed.durationSec * 1000)}${x.closed.estimated ? "（估）" : ""}</span>`;
       }
       return `<button class="srow${on ? " sel" : ""}" data-sid="${esc(x.sessionId)}" aria-pressed="${on}" title="${esc(x.sessionId)}">` +
         `<span class="dot led${x.generating ? " pulse" : ""}" style="background:${led};color:${led}"></span>` +
-        `<span class="sid">${esc(x.sessionId.slice(0, 13))}</span>` +
-        `<span class="sread${cls}">${read}</span>` +
-        `<span class="sago">${fmtAge(s.now - x.lastEventMs)}</span></button>`;
+        `<span class="smain">` +
+          `<span class="l1"><span class="sid">${esc(x.sessionId.slice(0, 13))}</span><span class="sread${cls}">${read}</span><span class="sago">${fmtAge(s.now - x.lastEventMs)}</span></span>` +
+          sub +
+        `</span></button>`;
     }).join("");
   }
   const lite = s.liteCount || 0;
