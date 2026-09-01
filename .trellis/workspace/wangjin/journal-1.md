@@ -111,3 +111,24 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 6: zcode-metrics v0.9.0：移除 Readout 大数字卡，Sessions 两行式行卡承载实时信息
+
+**Date**: 2026-09-01
+**Task**: zcode-metrics v0.9.0：移除 Readout 大数字卡，Sessions 两行式行卡承载实时信息
+**Branch**: `main`
+
+### Summary
+
+应用户判断移除 Readout·Last / Readout·Turn 两块大数字卡（Last 与 Detail 面板重复、Turn 锁死单会话），连同渲染逻辑与无用 CSS 清理。Sessions 面板升级为主行（全屏 8/12 列、列表上限 162→240px），行卡改两行式：首行状态灯+短 ID+实时读数+最近活跃；次行生成中显示本轮次数/Σtokens/已耗时/最近模型，空闲显示最近请求模型与 tokens/耗时+上一轮摘要，估算记录带'估'标。验证：合成 rollout 日志 + /internal/event 注入生成中/空闲双会话，CDP 驱动无头 Chrome 断言行文本、面板移除、栅格与列表高度并截图；单测 45/45。注：合成数据一次性灌入会使 turn 均值瞬时虚高，真实流量无此现象。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c47d3ad` | (see git log) |
+
+### Status
+
+[OK] **Completed**
