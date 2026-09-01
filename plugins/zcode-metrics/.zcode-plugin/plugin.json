@@ -1,6 +1,6 @@
 {
   "name": "zcode-metrics",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "实时 + 7 天历史仪表盘：多会话并行统计（会话总览列表 + 点行聚焦过滤分析）、模型输出速度（tok/s）、趋势、模型对比、缓存命中分析；零依赖本地收集器，Hook 保活 + rollout 日志精确统计",
   "author": { "name": "wangjin" },
   "license": "MIT",

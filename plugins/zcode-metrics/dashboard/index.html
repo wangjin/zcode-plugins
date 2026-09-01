@@ -96,6 +96,14 @@
   .sw-liteline { width: 14px; height: 0; border-top: 2px dashed var(--slate); border-radius: 0; vertical-align: 2px; }
   .sw-mline { display: inline-block; width: 14px; height: 2px; border-radius: 1px; margin-right: 5px; vertical-align: 2px; }
   .legend-hint { margin-left: auto; color: var(--faint); }
+  /* 图例即开关：点击隐藏/恢复单条曲线，隐藏项半透明但占位不变 */
+  .legend .lg-tog {
+    background: none; border: none; padding: 0; color: var(--dim);
+    font-size: 11px; cursor: pointer; display: inline-flex; align-items: center;
+  }
+  .legend .lg-tog:hover { color: var(--text); }
+  .legend .lg-tog.off { opacity: .38; }
+  .legend .lg-tog.off .sw-line { box-shadow: none; }
 
   /* ————— 空态 ————— */
   .empty { color: var(--faint); text-align: center; padding: 26px 12px; font-size: 12.5px; border: 1px dashed var(--line); border-radius: 8px; }
@@ -154,6 +162,9 @@
     white-space: nowrap; pointer-events: none; z-index: 4; box-shadow: 0 4px 14px rgba(0,0,0,.45);
   }
   .trend-tip b { color: var(--amber-hi); font-weight: 600; }
+  .trend-tip .tt-t { color: var(--faint); margin-bottom: 3px; }
+  .trend-tip .tt-r { display: flex; align-items: center; gap: 6px; }
+  .trend-tip .tt-r i { flex: none; width: 9px; height: 2px; border-radius: 1px; }
   /* 磷光绘入（仅首次渲染；reduced-motion 下直接显示） */
   .boot .avg-line { stroke-dasharray: 1; stroke-dashoffset: 1; animation: trace 1s .15s ease-out forwards; }
   .boot .avg-area { opacity: 0; animation: fadein .7s .6s ease-out forwards; }
@@ -525,8 +536,10 @@ let lastSnap = null;
 let selectedSid = null; // null = "全部"（自动跟随最近活跃会话）
 let curScope = { scoped: false, name: "全部会话", sess: null }; // 分析面板当前口径
 let trendGran = "m24";
-let trendGeom = null; // { pts:[{fx,fy,tip}], lite:[…], models:[…] } 供悬停读数定位
+let trendGeom = null; // { cols:[{fx, fys, html}] } 悬停按时间列吸附，一次读整列
 let trendH = 180;     // 趋势图当前高度（全屏模式随面板自适应）
+let trendHidden = new Set(); // 隐藏曲线 key："main"/"lite"/modelId（切换档位或口径时重置）
+let trendScopeKey = "";
 const TREND_PALETTE = ["#63B58F", "#8FA6BA", "#E06C5F", "#B48EAD", "#5FA8D3"]; // 模型曲线配色（store 侧单列上限同为 5）
 const shortModel = (id) => { const s = String(id).split("/"); return s[s.length - 1] || String(id); };
 function esc(x) { return String(x).replace(/[&<>"]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c])); }
@@ -536,6 +549,15 @@ document.getElementById("trendTabs").addEventListener("click", (e) => {
   if (!btn) return;
   trendGran = btn.dataset.gran;
   for (const b of document.querySelectorAll("#trendTabs .tab")) b.classList.toggle("active", b === btn);
+  renderTrend();
+});
+
+// 图例点击 = 隐藏/恢复单条曲线（含汇总），重绘后悬停列随之增减
+$("trendLegend").addEventListener("click", (e) => {
+  const btn = e.target.closest("button.lg-tog");
+  if (!btn) return;
+  const k = btn.dataset.key;
+  if (trendHidden.has(k)) trendHidden.delete(k); else trendHidden.add(k);
   renderTrend();
 });
 
@@ -553,19 +575,30 @@ function renderTrend() {
     el.innerHTML = `<div class="empty">⏳ 首次启动，正在回填近 7 天历史…</div>`;
     return;
   }
+  // 切换档位/口径时重置隐藏状态：模型集合随口径变化，保留旧隐藏键只会造成"点了没反应"的困惑
+  const scopeKey = trendGran + "|" + (curScope.scoped ? curScope.name : "all");
+  if (scopeKey !== trendScopeKey) { trendHidden.clear(); trendScopeKey = scopeKey; }
   const series = (trend[trendGran] || []);
-  const pts = series.filter(b => b.main && b.main.avg != null);
-  const litePts = series.filter(b => b.lite && b.lite.avg != null);
+  const rawPts = series.filter(b => b.main && b.main.avg != null);
+  const rawLite = series.filter(b => b.lite && b.lite.avg != null);
+  const visMain = !trendHidden.has("main"), visLite = !trendHidden.has("lite");
   // 模型曲线：store 只下发窗口内前 5 个模型的分列桶，这里重排优先级并统计被折叠数
   const modelTotals = new Map();
   for (const b of series) if (b.m) for (const k in b.m) modelTotals.set(k, (modelTotals.get(k) || 0) + b.m[k].n);
   const modelRank = [...modelTotals.entries()].sort((a, b) => b[1] - a[1]).map((e) => e[0]);
   const modelKeys = modelRank.slice(0, TREND_PALETTE.length);
   const hiddenModels = modelRank.length - modelKeys.length;
-  if (!pts.length && !litePts.length && !modelKeys.length) {
+  const visibleModels = modelKeys.filter((k) => !trendHidden.has(k));
+  if (!rawPts.length && !rawLite.length && !modelKeys.length) {
     el.innerHTML = curScope.scoped
       ? `<div class="empty">会话 ${esc(curScope.name)} 该时间范围内暂无记录。</div>`
       : `<div class="empty">窗口内暂无数据（store 共 ${s.store ? s.store.count : 0} 条，可能都在窗口之外）。</div>`;
+    return;
+  }
+  // 图例先画（全部隐藏时用户仍需要它来恢复）
+  renderTrendLegend(rawPts, rawLite, modelKeys, hiddenModels, visMain, visLite);
+  if (!(visMain && rawPts.length) && !(visLite && rawLite.length) && !visibleModels.length) {
+    el.innerHTML = `<div class="empty">所有曲线都已隐藏 —— 点击下方图例恢复。</div>`;
     return;
   }
   const W = Math.max(320, el.clientWidth || 800), PAD = 10;
@@ -575,8 +608,10 @@ function renderTrend() {
   trendH = fullMode ? Math.max(100, wrapH - 28) : 180;
   el.style.setProperty("--trend-h", trendH + "px");
   const H = trendH;
-  const modelAvgV = series.flatMap(b => b.m ? Object.values(b.m) : []).map(v => v.avg || 0);
-  const maxV = Math.max(...pts.concat(litePts).map(b => Math.max(b.main?.avg || 0, b.lite?.avg || 0)), ...modelAvgV, 1);
+  let maxV = 1; // 峰值只看可见曲线：隐藏大值模型后其余曲线仍占满纵向空间
+  if (visMain) for (const b of rawPts) maxV = Math.max(maxV, b.main.avg);
+  if (visLite) for (const b of rawLite) maxV = Math.max(maxV, b.lite.avg);
+  for (const k of visibleModels) for (const b of series) { const mv = b.m && b.m[k]; if (mv && mv.avg != null) maxV = Math.max(maxV, mv.avg); }
   const n = series.length;
   const x = (i) => PAD + (i / (n - 1)) * (W - 2 * PAD);
   const y = (v) => H - PAD - (v / maxV) * (H - 2 * PAD);
@@ -595,75 +630,104 @@ function renderTrend() {
   }
   const mk = (arr, key) => arr.map(b => {
     const i = series.indexOf(b);
-    return { px: x(i), py: y(b[key].avg), fx: x(i) / W, fy: y(b[key].avg) / H, b };
+    return { i, px: x(i), py: y(b[key].avg), fy: y(b[key].avg) / H, b };
   });
   let path = "";
-  const geoPts = [], geoLite = [], geoModels = [];
-  if (pts.length) {
-    const P = mk(pts, "main");
+  const colRows = series.map(() => []); // 每个时间桶一列：收集该列全部可见曲线的读数
+  if (visMain && rawPts.length) {
+    const P = mk(rawPts, "main");
     const line = P.map((p, i) => `${i ? "L" : "M"}${p.px.toFixed(1)},${p.py.toFixed(1)}`).join("");
     const area = line + `L${P[P.length-1].px.toFixed(1)},${H-PAD}L${P[0].px.toFixed(1)},${H-PAD}Z`;
     path += `<path class="avg-area" d="${area}"/><path class="avg-line" pathLength="1" d="${line}"/>`;
-    for (const p of P) path += `<circle class="dot" cx="${p.px.toFixed(1)}" cy="${p.py.toFixed(1)}" r="3"/>`;
-    for (const p of P) geoPts.push({ fx: p.fx, fy: p.fy, tip: `<b>${fmt(p.b.main.avg)} tok/s</b> · 主请求 ${p.b.main.n} 次 · ${esc(lbl(p.b.b))}` });
+    for (const p of P) {
+      path += `<circle class="dot" cx="${p.px.toFixed(1)}" cy="${p.py.toFixed(1)}" r="3"/>`;
+      colRows[p.i].push({ fy: p.fy, avg: p.b.main.avg, n: p.b.main.n, label: "主请求", color: "var(--amber-hi)" });
+    }
   }
-  if (litePts.length) {
-    const P = mk(litePts, "lite");
+  if (visLite && rawLite.length) {
+    const P = mk(rawLite, "lite");
     const line = P.map((p, i) => `${i ? "L" : "M"}${p.px.toFixed(1)},${p.py.toFixed(1)}`).join("");
     path += `<path class="lite-line" d="${line}"/>`;
-    for (const p of P) path += `<circle class="dot-lite" cx="${p.px.toFixed(1)}" cy="${p.py.toFixed(1)}" r="2.5"/>`;
-    for (const p of P) geoLite.push({ fx: p.fx, fy: p.fy, tip: `<b>${fmt(p.b.lite.avg)} tok/s</b> · lite ${p.b.lite.n} 次 · ${esc(lbl(p.b.b))}` });
+    for (const p of P) {
+      path += `<circle class="dot-lite" cx="${p.px.toFixed(1)}" cy="${p.py.toFixed(1)}" r="2.5"/>`;
+      colRows[p.i].push({ fy: p.fy, avg: p.b.lite.avg, n: p.b.lite.n, label: "lite", color: "var(--slate)" });
+    }
   }
-  modelKeys.forEach((key, mi) => {
+  visibleModels.forEach((key) => {
+    const mi = modelKeys.indexOf(key); // 颜色槽位按排名固定，隐藏再恢复不变色
     const color = TREND_PALETTE[mi];
     const P = [];
     series.forEach((b, i) => {
       const mv = b.m && b.m[key];
-      if (mv && mv.avg != null) P.push({ px: x(i), py: y(mv.avg), fx: x(i) / W, fy: y(mv.avg) / H, mv, b });
+      if (mv && mv.avg != null) P.push({ i, px: x(i), py: y(mv.avg), fy: y(mv.avg) / H, mv, b });
     });
     if (!P.length) return;
     const line = P.map((p, i) => `${i ? "L" : "M"}${p.px.toFixed(1)},${p.py.toFixed(1)}`).join("");
     path += `<path class="model-line" style="stroke:${color}" d="${line}"/>`;
-    for (const p of P) path += `<circle class="dot-m" style="fill:${color}" cx="${p.px.toFixed(1)}" cy="${p.py.toFixed(1)}" r="2.5"/>`;
-    for (const p of P) geoModels.push({ fx: p.fx, fy: p.fy, tip: `<b style="color:${color}">${esc(shortModel(key))}</b> ${fmt(p.mv.avg)} tok/s · ${p.mv.n} 次 · ${esc(lbl(p.b.b))}` });
+    for (const p of P) {
+      path += `<circle class="dot-m" style="fill:${color}" cx="${p.px.toFixed(1)}" cy="${p.py.toFixed(1)}" r="2.5"/>`;
+      colRows[p.i].push({ fy: p.fy, avg: p.mv.avg, n: p.mv.n, label: shortModel(key), color });
+    }
   });
-  trendGeom = { pts: geoPts, lite: geoLite, models: geoModels };
+  // 悬停列：同一时间桶上的全部可见曲线合成一列读数（解决"模型点被汇总点盖住"的吸附冲突）
+  const cols = [];
+  series.forEach((b, i) => {
+    const rows = colRows[i];
+    if (!rows.length) return;
+    cols.push({
+      fx: x(i),
+      fys: rows.map((r) => r.fy),
+      html: `<div class="tt-t">${esc(lbl(b.b))}</div>` +
+        rows.map((r) => `<div class="tt-r"><i style="background:${r.color}"></i>${esc(r.label)} <b style="color:${r.color}">${fmt(r.avg)}</b> · ${r.n} 次</div>`).join(""),
+    });
+  });
+  trendGeom = { cols };
   // x 轴首尾标签
   const first = series[0]?.b, lastB = series[series.length - 1]?.b;
   el.innerHTML = `<svg viewBox="0 0 ${W} ${H}">${grid}${path}</svg>` +
     `<div class="xlab"><span>${esc(lbl(first))}</span><span>峰值 ${fmt(maxV, 0)} tok/s</span><span>${esc(lbl(lastB))}</span></div>`;
-  // 动态图例：汇总两条 + 每模型一条（title 悬浮显示完整 modelId）
-  let lg = `<span><i class="sw sw-line"></i>主请求 avg</span>`;
-  if (litePts.length) lg += `<span><i class="sw sw-liteline"></i>后台任务(lite)</span>`;
+}
+
+/* 图例：每条曲线（汇总 + 模型）都是开关，点击隐藏/恢复；隐藏项半透明但保留原位 */
+function renderTrendLegend(rawPts, rawLite, modelKeys, hiddenModels, visMain, visLite) {
+  let lg = "";
+  if (rawPts.length || !visMain) {
+    lg += `<button class="lg-tog${visMain ? "" : " off"}" data-key="main" title="点击隐藏/恢复曲线"><i class="sw sw-line"></i>主请求 avg</button>`;
+  }
+  if (rawLite.length || !visLite) {
+    lg += `<button class="lg-tog${visLite ? "" : " off"}" data-key="lite" title="点击隐藏/恢复曲线"><i class="sw sw-liteline"></i>后台任务(lite)</button>`;
+  }
   modelKeys.forEach((k, mi) => {
-    lg += `<span><i class="sw-mline" style="background:${TREND_PALETTE[mi]}"></i><span title="${esc(k)}">${esc(shortModel(k))}</span></span>`;
+    lg += `<button class="lg-tog${trendHidden.has(k) ? " off" : ""}" data-key="${esc(k)}" title="${esc(k)} · 点击隐藏/恢复">` +
+      `<i class="sw-mline" style="background:${TREND_PALETTE[mi]}"></i>${esc(shortModel(k))}</button>`;
   });
   lg += hiddenModels > 0
     ? `<span class="legend-hint">另有 ${hiddenModels} 个低流量模型未单列</span>`
-    : `<span class="legend-hint">悬停查看该时段读数</span>`;
+    : `<span class="legend-hint">点击图例隐藏/恢复曲线 · 悬停看整列读数</span>`;
   $("trendLegend").innerHTML = lg;
 }
 
-/* 悬停读数：就近吸附数据点，仪器式 crosshair 提示。
+/* 悬停读数：按时间列吸附（x 最近 → 列内 y 最近的曲线作锚点），
+   一列展示该时刻全部可见曲线（模型 + 汇总），不再出现模型点被汇总点盖住。
    tip 挂在 trendWrap（不会被 SSE 重渲染冲掉），每次重绘先隐藏。 */
 let trendTip = null;
 function hideTrendTip() { if (trendTip) trendTip.style.display = "none"; }
 (() => {
   const box = $("trendWrap");
   box.addEventListener("pointermove", (e) => {
-    if (!trendGeom) return hideTrendTip();
-    // 汇总优先（同 x 重叠时汇总先入池，tip 稳定落在汇总读数上），模型曲线次之
-    const pool = trendGeom.pts.concat(trendGeom.lite, trendGeom.models || []);
-    if (!pool || !pool.length) return hideTrendTip();
+    const cols = trendGeom && trendGeom.cols;
+    if (!cols || !cols.length) return hideTrendTip();
     const rect = box.getBoundingClientRect();
-    const mx = e.clientX - rect.left;
-    let best = pool[0];
-    for (const p of pool) if (Math.abs(p.fx * rect.width - mx) < Math.abs(best.fx * rect.width - mx)) best = p;
+    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+    let col = cols[0];
+    for (const c of cols) if (Math.abs(c.fx * rect.width - mx) < Math.abs(col.fx * rect.width - mx)) col = c;
+    let fy = col.fys[0]; // 锚点 = 列内离光标最近的曲线，tip 从那里弹出
+    for (const f of col.fys) if (Math.abs(f * trendH - my) < Math.abs(fy * trendH - my)) fy = f;
     if (!trendTip) { trendTip = document.createElement("div"); trendTip.className = "trend-tip"; box.appendChild(trendTip); }
-    trendTip.innerHTML = best.tip;
+    trendTip.innerHTML = col.html;
     trendTip.style.display = "block";
-    trendTip.style.left = Math.min(Math.max(best.fx * rect.width, 70), rect.width - 70) + "px";
-    trendTip.style.top = Math.max(best.fy * trendH - 12, 4) + "px";
+    trendTip.style.left = Math.min(Math.max(col.fx * rect.width, 90), rect.width - 90) + "px";
+    trendTip.style.top = Math.max(fy * trendH - 12, 4) + "px";
   });
   box.addEventListener("pointerleave", hideTrendTip);
   window.addEventListener("resize", () => { if (lastSnap) renderTrend(); });
