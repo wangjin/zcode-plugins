@@ -4,12 +4,15 @@
 //   cacheReadTokens, cacheWriteTokens, durationMs, tokPerSec, completedAtMs, source }
 
 export const WINDOW_MS = 7 * 24 * 3600 * 1000; // R7/D2：7 天滚动窗口
+const M10 = 10 * 60 * 1000;
 const HOUR = 3600 * 1000;
 const DAY = 24 * HOUR;
+const TREND_MODELS = 5;        // 趋势图单列模型曲线上限（payload AC10 + 图表可读性）
 const P95_BUCKET = 5;          // 直方图桶宽（tok/s）：典型速度 10~500，桶宽 5 精度足够
 const P95_BUCKETS = 2000;      // 覆盖 0..10000 tok/s，越界值归入末桶
 
-/** 本地时区整点/日界（design：桶边界与用户直觉一致）。 */
+/** 本地时区 10 分钟/整点/日界（design：桶边界与用户直觉一致）。 */
+function floor10m(ms) { const d = new Date(ms); d.setMinutes(Math.floor(d.getMinutes() / 10) * 10, 0, 0); return d.getTime(); }
 function floorHour(ms) { const d = new Date(ms); d.setMinutes(0, 0, 0); return d.getTime(); }
 function floorDay(ms) { const d = new Date(ms); d.setHours(0, 0, 0, 0); return d.getTime(); }
 
@@ -110,31 +113,49 @@ export function createStore(opts = {}) {
     return dropped;
   }
 
-  /** 趋势：近 48 小时桶 / 近 7 天桶；吞吐加权 avg；main/lite 分列；无数据桶为 null。
+  /** 趋势：近 24 小时（10 分钟桶）/ 近 48 小时桶 / 近 7 天桶；吞吐加权 avg；main/lite 分列；无数据桶为 null。
+   *  桶内 m（可选）：按窗口请求数取前 TREND_MODELS 个模型的分列聚合（payload AC10，空桶/未入选不下发）。
    *  sid（可选）：只统计 r.sessionId === sid 的记录（多会话过滤口径，无 sid 记录天然排除）。 */
   function trend(now, sid) {
-    return { hour: trendSeries(now, HOUR, 48, floorHour, sid), day: trendSeries(now, DAY, 7, floorDay, sid) };
+    return {
+      m24: trendSeries(now, M10, 144, floor10m, sid),
+      hour: trendSeries(now, HOUR, 48, floorHour, sid),
+      day: trendSeries(now, DAY, 7, floorDay, sid),
+    };
   }
 
   function trendSeries(now, step, count, floor, sid) {
     const start = floor(now) - (count - 1) * step;
     const cells = new Map();
+    const modelN = new Map(); // 窗口内各模型请求数：决定哪几个模型有资格单列曲线
     for (const r of byId.values()) {
       if (sid !== undefined && r.sessionId !== sid) continue;
       const t = r.completedAtMs;
       if (t < start) continue;
       const key = floor(t);
       if (key < start) continue;
+      modelN.set(r.modelId, (modelN.get(r.modelId) || 0) + 1);
       let c = cells.get(key);
-      if (!c) { c = { main: { n: 0, so: 0, sd: 0 }, lite: { n: 0, so: 0, sd: 0 } }; cells.set(key, c); }
+      if (!c) { c = { main: { n: 0, so: 0, sd: 0 }, lite: { n: 0, so: 0, sd: 0 }, m: new Map() }; cells.set(key, c); }
       const cell = r.role === "lite" ? c.lite : c.main;
       cell.n += 1; cell.so += r.outputTokens || 0; cell.sd += r.durationMs || 0;
+      let mv = c.m.get(r.modelId);
+      if (!mv) { mv = { n: 0, so: 0, sd: 0 }; c.m.set(r.modelId, mv); }
+      mv.n += 1; mv.so += r.outputTokens || 0; mv.sd += r.durationMs || 0;
     }
+    const top = [...modelN.entries()]
+      .sort((x, y) => y[1] - x[1] || String(x[0]).localeCompare(String(y[0])))
+      .slice(0, TREND_MODELS).map((e) => e[0]);
     const out = [];
     for (let i = 0; i < count; i++) {
       const b = start + i * step;
       const c = cells.get(b);
-      out.push({ b, main: c ? cellView(c.main) : null, lite: c ? cellView(c.lite) : null });
+      if (!c) { out.push({ b, main: null, lite: null }); continue; }
+      const row = { b, main: cellView(c.main), lite: cellView(c.lite) };
+      const m = {};
+      for (const k of top) { const mv = c.m.get(k); if (mv) m[k] = cellView(mv); }
+      if (Object.keys(m).length) row.m = m; // 无入选模型数据的桶不下发 m（体积）
+      out.push(row);
     }
     return out;
   }
@@ -193,7 +214,7 @@ export function createStore(opts = {}) {
     const sid = opts && opts.sessionId != null ? opts.sessionId : undefined;
     const t = trend(now, sid);
     return {
-      trend: { hour: t.hour, day: t.day },
+      trend: { m24: t.m24, hour: t.hour, day: t.day },
       models: models(sid),
       cache: cache(sid),
       store: { count: byId.size, since, backfilling, windowMs },

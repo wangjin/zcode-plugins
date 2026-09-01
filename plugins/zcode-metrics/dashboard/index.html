@@ -94,6 +94,7 @@
   .sw-est { background: repeating-linear-gradient(-45deg, rgba(242,166,75,.55) 0 2px, rgba(242,166,75,.08) 2px 5px); box-shadow: inset 0 0 0 1px rgba(242,166,75,.3); }
   .sw-line { width: 14px; height: 2px; border-radius: 1px; background: var(--amber); box-shadow: 0 0 6px rgba(242,166,75,.6); vertical-align: 2px; }
   .sw-liteline { width: 14px; height: 0; border-top: 2px dashed var(--slate); border-radius: 0; vertical-align: 2px; }
+  .sw-mline { display: inline-block; width: 14px; height: 2px; border-radius: 1px; margin-right: 5px; vertical-align: 2px; }
   .legend-hint { margin-left: auto; color: var(--faint); }
 
   /* ————— 空态 ————— */
@@ -139,9 +140,11 @@
   }
   #trend svg .avg-area { fill: var(--amber-soft); stroke: none; }
   #trend svg .lite-line { stroke: var(--slate); stroke-width: 1.4; stroke-dasharray: 4 4; fill: none; }
+  #trend svg .model-line { stroke-width: 1.4; fill: none; stroke-linejoin: round; stroke-linecap: round; }
   #trend svg .dot { fill: var(--amber); transition: r .12s; }
   #trend svg .dot:hover { r: 5; }
   #trend svg .dot-lite { fill: var(--slate); }
+  #trend svg .dot-m { transition: r .12s; }
   #trend svg text { fill: var(--faint); font: 10px var(--mono); }
   #trend .xlab { display: flex; justify-content: space-between; color: var(--faint); font: 10.5px var(--mono); margin-top: 4px; }
   .trend-tip {
@@ -333,12 +336,13 @@
         <div class="label" id="trendLabel">速度趋势（吞吐加权 tok/s）</div>
       </div>
       <span id="trendTabs" class="tabs">
-        <button class="tab active" data-gran="hour">近 48 小时</button>
+        <button class="tab active" data-gran="m24">近 24 小时</button>
+        <button class="tab" data-gran="hour">近 48 小时</button>
         <button class="tab" data-gran="day">近 7 天</button>
       </span>
     </div>
     <div id="trendWrap"><div id="trend"><div class="empty">暂无历史数据 —— 有请求后这里会绘制速度趋势线。</div></div></div>
-    <div class="legend">
+    <div class="legend" id="trendLegend">
       <span><i class="sw sw-line"></i>主请求 avg</span>
       <span><i class="sw sw-liteline"></i>后台任务(lite)</span>
       <span class="legend-hint">悬停查看该时段读数</span>
@@ -520,9 +524,11 @@ $("scopeAll").addEventListener("click", () => {
 let lastSnap = null;
 let selectedSid = null; // null = "全部"（自动跟随最近活跃会话）
 let curScope = { scoped: false, name: "全部会话", sess: null }; // 分析面板当前口径
-let trendGran = "hour";
-let trendGeom = null; // { pts:[{fx,fy,tip}], lite:[…] } 供悬停读数定位
+let trendGran = "m24";
+let trendGeom = null; // { pts:[{fx,fy,tip}], lite:[…], models:[…] } 供悬停读数定位
 let trendH = 180;     // 趋势图当前高度（全屏模式随面板自适应）
+const TREND_PALETTE = ["#63B58F", "#8FA6BA", "#E06C5F", "#B48EAD", "#5FA8D3"]; // 模型曲线配色（store 侧单列上限同为 5）
+const shortModel = (id) => { const s = String(id).split("/"); return s[s.length - 1] || String(id); };
 function esc(x) { return String(x).replace(/[&<>"]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c])); }
 
 document.getElementById("trendTabs").addEventListener("click", (e) => {
@@ -550,9 +556,15 @@ function renderTrend() {
   const series = (trend[trendGran] || []);
   const pts = series.filter(b => b.main && b.main.avg != null);
   const litePts = series.filter(b => b.lite && b.lite.avg != null);
-  if (!pts.length && !litePts.length) {
+  // 模型曲线：store 只下发窗口内前 5 个模型的分列桶，这里重排优先级并统计被折叠数
+  const modelTotals = new Map();
+  for (const b of series) if (b.m) for (const k in b.m) modelTotals.set(k, (modelTotals.get(k) || 0) + b.m[k].n);
+  const modelRank = [...modelTotals.entries()].sort((a, b) => b[1] - a[1]).map((e) => e[0]);
+  const modelKeys = modelRank.slice(0, TREND_PALETTE.length);
+  const hiddenModels = modelRank.length - modelKeys.length;
+  if (!pts.length && !litePts.length && !modelKeys.length) {
     el.innerHTML = curScope.scoped
-      ? `<div class="empty">会话 ${esc(curScope.name)} 近 7 天暂无记录。</div>`
+      ? `<div class="empty">会话 ${esc(curScope.name)} 该时间范围内暂无记录。</div>`
       : `<div class="empty">窗口内暂无数据（store 共 ${s.store ? s.store.count : 0} 条，可能都在窗口之外）。</div>`;
     return;
   }
@@ -563,12 +575,17 @@ function renderTrend() {
   trendH = fullMode ? Math.max(100, wrapH - 28) : 180;
   el.style.setProperty("--trend-h", trendH + "px");
   const H = trendH;
-  const all = pts.concat(litePts);
-  const maxV = Math.max(...all.map(b => Math.max(b.main?.avg || 0, b.lite?.avg || 0)), 1);
+  const modelAvgV = series.flatMap(b => b.m ? Object.values(b.m) : []).map(v => v.avg || 0);
+  const maxV = Math.max(...pts.concat(litePts).map(b => Math.max(b.main?.avg || 0, b.lite?.avg || 0)), ...modelAvgV, 1);
   const n = series.length;
   const x = (i) => PAD + (i / (n - 1)) * (W - 2 * PAD);
   const y = (v) => H - PAD - (v / maxV) * (H - 2 * PAD);
-  const lbl = (ms) => { const d = new Date(ms); return trendGran === "hour" ? `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,"0")}:00` : `${d.getMonth()+1}/${d.getDate()}`; };
+  const lbl = (ms) => {
+    const d = new Date(ms);
+    const date = `${d.getMonth()+1}/${d.getDate()}`;
+    const hm = `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
+    return trendGran === "day" ? date : trendGran === "m24" ? `${date} ${hm}` : `${date} ${hm.slice(0, 3)}00`;
+  };
   // 网格线 + y 轴标注（0 / 半 / max）
   let grid = "";
   for (const fv of [0, 0.5, 1]) {
@@ -581,26 +598,50 @@ function renderTrend() {
     return { px: x(i), py: y(b[key].avg), fx: x(i) / W, fy: y(b[key].avg) / H, b };
   });
   let path = "";
+  const geoPts = [], geoLite = [], geoModels = [];
   if (pts.length) {
     const P = mk(pts, "main");
     const line = P.map((p, i) => `${i ? "L" : "M"}${p.px.toFixed(1)},${p.py.toFixed(1)}`).join("");
     const area = line + `L${P[P.length-1].px.toFixed(1)},${H-PAD}L${P[0].px.toFixed(1)},${H-PAD}Z`;
     path += `<path class="avg-area" d="${area}"/><path class="avg-line" pathLength="1" d="${line}"/>`;
     for (const p of P) path += `<circle class="dot" cx="${p.px.toFixed(1)}" cy="${p.py.toFixed(1)}" r="3"/>`;
-    trendGeom = { pts: P.map(p => ({ fx: p.fx, fy: p.fy, tip: `<b>${fmt(p.b.main.avg)} tok/s</b> · ${p.b.main.n} 次 · ${esc(lbl(p.b.b))}` })), lite: [] };
+    for (const p of P) geoPts.push({ fx: p.fx, fy: p.fy, tip: `<b>${fmt(p.b.main.avg)} tok/s</b> · 主请求 ${p.b.main.n} 次 · ${esc(lbl(p.b.b))}` });
   }
   if (litePts.length) {
     const P = mk(litePts, "lite");
     const line = P.map((p, i) => `${i ? "L" : "M"}${p.px.toFixed(1)},${p.py.toFixed(1)}`).join("");
     path += `<path class="lite-line" d="${line}"/>`;
     for (const p of P) path += `<circle class="dot-lite" cx="${p.px.toFixed(1)}" cy="${p.py.toFixed(1)}" r="2.5"/>`;
-    const geo = P.map(p => ({ fx: p.fx, fy: p.fy, tip: `<b>${fmt(p.b.lite.avg)} tok/s</b> · ${p.b.lite.n} 次 · ${esc(lbl(p.b.b))}` }));
-    if (trendGeom) trendGeom.lite = geo; else trendGeom = { pts: [], lite: geo };
+    for (const p of P) geoLite.push({ fx: p.fx, fy: p.fy, tip: `<b>${fmt(p.b.lite.avg)} tok/s</b> · lite ${p.b.lite.n} 次 · ${esc(lbl(p.b.b))}` });
   }
+  modelKeys.forEach((key, mi) => {
+    const color = TREND_PALETTE[mi];
+    const P = [];
+    series.forEach((b, i) => {
+      const mv = b.m && b.m[key];
+      if (mv && mv.avg != null) P.push({ px: x(i), py: y(mv.avg), fx: x(i) / W, fy: y(mv.avg) / H, mv, b });
+    });
+    if (!P.length) return;
+    const line = P.map((p, i) => `${i ? "L" : "M"}${p.px.toFixed(1)},${p.py.toFixed(1)}`).join("");
+    path += `<path class="model-line" style="stroke:${color}" d="${line}"/>`;
+    for (const p of P) path += `<circle class="dot-m" style="fill:${color}" cx="${p.px.toFixed(1)}" cy="${p.py.toFixed(1)}" r="2.5"/>`;
+    for (const p of P) geoModels.push({ fx: p.fx, fy: p.fy, tip: `<b style="color:${color}">${esc(shortModel(key))}</b> ${fmt(p.mv.avg)} tok/s · ${p.mv.n} 次 · ${esc(lbl(p.b.b))}` });
+  });
+  trendGeom = { pts: geoPts, lite: geoLite, models: geoModels };
   // x 轴首尾标签
   const first = series[0]?.b, lastB = series[series.length - 1]?.b;
   el.innerHTML = `<svg viewBox="0 0 ${W} ${H}">${grid}${path}</svg>` +
     `<div class="xlab"><span>${esc(lbl(first))}</span><span>峰值 ${fmt(maxV, 0)} tok/s</span><span>${esc(lbl(lastB))}</span></div>`;
+  // 动态图例：汇总两条 + 每模型一条（title 悬浮显示完整 modelId）
+  let lg = `<span><i class="sw sw-line"></i>主请求 avg</span>`;
+  if (litePts.length) lg += `<span><i class="sw sw-liteline"></i>后台任务(lite)</span>`;
+  modelKeys.forEach((k, mi) => {
+    lg += `<span><i class="sw-mline" style="background:${TREND_PALETTE[mi]}"></i><span title="${esc(k)}">${esc(shortModel(k))}</span></span>`;
+  });
+  lg += hiddenModels > 0
+    ? `<span class="legend-hint">另有 ${hiddenModels} 个低流量模型未单列</span>`
+    : `<span class="legend-hint">悬停查看该时段读数</span>`;
+  $("trendLegend").innerHTML = lg;
 }
 
 /* 悬停读数：就近吸附数据点，仪器式 crosshair 提示。
@@ -611,7 +652,8 @@ function hideTrendTip() { if (trendTip) trendTip.style.display = "none"; }
   const box = $("trendWrap");
   box.addEventListener("pointermove", (e) => {
     if (!trendGeom) return hideTrendTip();
-    const pool = trendGeom.pts.length ? trendGeom.pts : trendGeom.lite;
+    // 汇总优先（同 x 重叠时汇总先入池，tip 稳定落在汇总读数上），模型曲线次之
+    const pool = trendGeom.pts.concat(trendGeom.lite, trendGeom.models || []);
     if (!pool || !pool.length) return hideTrendTip();
     const rect = box.getBoundingClientRect();
     const mx = e.clientX - rect.left;

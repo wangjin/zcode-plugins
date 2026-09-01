@@ -64,6 +64,51 @@ test("trend: 小时桶边界 + 吞吐加权 + main/lite 分列 + 空桶 null", (
   assert.deepEqual(t.day[6].lite, { n: 1, sumOut: 40, avg: 40 });
 });
 
+test("trend.m24: 10 分钟桶边界（12:30 恰在桶界）+ 144 桶 + 模型分列", () => {
+  const s = createStore();
+  // 12:30 桶：main glm 两条（200tok/4s + 100tok/2s → 加权 75）；另一模型 1 条
+  s.add(rec({ id: "a", completedAtMs: NOW - 60_000, outputTokens: 200, durationMs: 4000 }));
+  s.add(rec({ id: "b", completedAtMs: NOW - 30_000, outputTokens: 100, durationMs: 2000 }));
+  s.add(rec({ id: "x", completedAtMs: NOW - 10_000, modelId: "other", outputTokens: 60, durationMs: 3000 }));
+  // d = 11:30:01 → 11:30 桶（start = 昨日 12:40，偏移 137 个 10 分钟）
+  s.add(rec({ id: "d", completedAtMs: NOW - H + 1000, outputTokens: 90, durationMs: 900 }));
+  const t = s.trend(NOW);
+  assert.equal(t.m24.length, 144);
+  // 12:29 的记录 → 12:20 桶（倒数第二格）；12:30 桶（最后一格）恰为空，验证桶界
+  const cur = t.m24[142];
+  assert.equal(cur.b, NOW - 10 * 60_000);
+  assert.deepEqual(cur.main, { n: 3, sumOut: 360, avg: 360 / 9000 * 1000 });
+  assert.deepEqual(cur.m, {
+    glm: { n: 2, sumOut: 300, avg: 50 },
+    other: { n: 1, sumOut: 60, avg: 20 },
+  });
+  assert.deepEqual(cur.lite, { n: 0, sumOut: 0, avg: null });
+  const last = t.m24[143];
+  assert.equal(last.b, NOW);           // 12:30 恰为 10 分钟桶界
+  assert.equal(last.main, null);       // 空桶
+  assert.ok(!("m" in last));           // 空桶不下发模型分列
+  assert.deepEqual(t.m24[137].main, { n: 1, sumOut: 90, avg: 100 });
+  assert.deepEqual(t.m24[137].m, { glm: { n: 1, sumOut: 90, avg: 100 } });
+  assert.equal(t.m24[0].main, null);   // 空桶
+  assert.ok(!("m" in t.m24[0]));       // 空桶不下发模型分列
+});
+
+test("trend 模型分列：仅窗口内请求数前 5 的模型单列，main 聚合仍含全部模型", () => {
+  const s = createStore();
+  const models = ["mA", "mB", "mC", "mD", "mE", "mF", "mG"];
+  models.forEach((m, i) => {
+    const n = 7 - i; // 7,6,5,4,3,2,1 → 前 5 = mA..mE（mF/mG 被折叠）
+    for (let k = 0; k < n; k++) {
+      s.add(rec({ id: `${m}-${k}`, modelId: m, completedAtMs: NOW - 1000, outputTokens: 100, durationMs: 1000 }));
+    }
+  });
+  const cur = s.trend(NOW).hour[47];
+  assert.deepEqual(Object.keys(cur.m), ["mA", "mB", "mC", "mD", "mE"]); // n 降序
+  assert.equal(cur.m.mE.n, 3);
+  assert.equal(cur.main.n, 28); // 聚合不受 top5 截断影响（7+6+5+4+3+2+1）
+  assert.equal(cur.main.sumOut, 2800);
+});
+
 test("models: 聚合、n 降序、cacheHit 排除 estimate", () => {
   const s = createStore();
   s.add(rec({ id: "1", modelId: "a", outputTokens: 100, durationMs: 1000, inputTokens: 1000, cacheReadTokens: 500 }));
@@ -106,6 +151,7 @@ test("view(): 结构完整 + store 元信息", () => {
   const v = s.view(NOW);
   assert.equal(v.store.count, 1);
   assert.equal(v.store.backfilling, true);
+  assert.ok(Array.isArray(v.trend.m24) && v.trend.m24.length === 144);
   assert.ok(Array.isArray(v.trend.hour) && v.trend.hour.length === 48);
   assert.ok(Array.isArray(v.trend.day) && v.trend.day.length === 7);
   assert.equal(v.models.length, 1);
