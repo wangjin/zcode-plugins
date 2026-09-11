@@ -70,3 +70,9 @@ If the user says "AI did not read Trellis state":
 3. Manually run the `.trellis/scripts/get_context.py` or `task.py current --source` command that the hook depends on.
 4. Check whether active task state exists in `.trellis/.runtime/sessions/`.
 5. Check whether the platform shell passes session identity.
+
+## Platform Quirk: ZCode `ZCODE_PROJECT_DIR` follows the live cwd
+
+Unlike Claude Code (where `CLAUDE_PROJECT_DIR` is pinned to the workspace root), ZCode expands `${ZCODE_PROJECT_DIR}` — and runs hook commands — with the agent's *current* directory. Once the agent `cd`s into a subdirectory, any hook command of the form `python3 "${ZCODE_PROJECT_DIR}/.zcode/hooks/x.py"` resolves to a nonexistent path and fails with `can't open file ... [Errno 2]`.
+
+Fix pattern (already applied to local projects and the local trellis CLI template in 2026-09): the hook command must walk up from `$PWD` to locate `.zcode/hooks/<script>` instead of trusting the variable, and `session-start.py` must walk up to the `.trellis/` owner directory (the other three hook scripts already do this). Upstream: `mindfold-ai/trellis` templates (`templates/zcode/config.json`, `templates/shared-hooks/session-start.py`).

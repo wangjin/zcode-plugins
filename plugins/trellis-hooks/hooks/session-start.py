@@ -767,6 +767,19 @@ def main():
     if project_dir is None:
         project_dir = Path(_normalize_windows_shell_path(hook_input.get("cwd", "."))).resolve()
 
+    # CWD-drift guard: ZCode-style hosts keep *_PROJECT_DIR and the hook cwd
+    # in sync with the agent's live directory, so SessionStart (also fired by
+    # clear/compact) can run from a subdirectory. Walk up to the directory
+    # that actually owns .trellis/; if none does, this is not a Trellis
+    # project - exit silently like the other hook scripts.
+    probe = project_dir
+    while probe != probe.parent and not (probe / ".trellis").is_dir():
+        probe = probe.parent
+    if (probe / ".trellis").is_dir():
+        project_dir = probe
+    else:
+        return
+
     trellis_dir = project_dir / ".trellis"
     context_key = _resolve_context_key(trellis_dir, hook_input)
     _persist_context_key_for_bash(context_key)

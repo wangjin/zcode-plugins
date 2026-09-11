@@ -4,6 +4,7 @@
 # 本地工具产物
 .codegraph/
 .playwright-mcp/
+__pycache__/
 
 # 根目录截图（验收记录，不入库）
 /*.png
