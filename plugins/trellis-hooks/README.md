@@ -23,6 +23,11 @@ Trellis 工作流的 ZCode hooks，以**本地插件**形式分发。
 cd 进子目录后路径失效）的核心优势。脚本运行时再从 hook 输入的 `cwd` 向上查找项目
 `.trellis/`，因此**对所有 Trellis 项目通用**，非 Trellis 项目静默退出。
 
+自愈（v0.1.3 起）：`trellis update` 会把 `.zcode/config.json` 重新渲染回带
+`${ZCODE_PROJECT_DIR}` 命令的上游模板（上游 0.6.17 仍未修，2026-09-17 曾因此复发
+全量拦截）。`session-start.py` 在每次会话启动时自动剥掉这些漂移型注册（只动含
+`${ZCODE_PROJECT_DIR}` 的命令，用户自定义 hook 保留），由插件继续提供同一组 hooks。
+
 ## 维护
 
 - 脚本源头是 Trellis 各平台共用的 hook（trellis 包 `dist/templates/shared-hooks/`，
@@ -31,6 +36,8 @@ cd 进子目录后路径失效）的核心优势。脚本运行时再从 hook �
   （`~/.zcode/cli/plugins/cache/zcode-toolbox/trellis-hooks/`）。
   注意：上游模板的 `session-start.py` 直接信任 `*_PROJECT_DIR`/cwd 推导项目根，ZCode 下
   compact/clear 时若 agent 已在子目录会 ModuleNotFoundError，re-vendor 后需重套 main() 里
-  的 CWD-drift guard（向上探测 `.trellis/`，找不到静默退出）。
+  的两处本地守卫：CWD-drift guard（向上探测 `.trellis/`，找不到静默退出）与
+  `_neutralize_drift_prone_zcode_hooks`（剥除工作区 config 的 `${ZCODE_PROJECT_DIR}`
+  漂移型注册）。
 - 临时跳过某轮注入：提示词中包含 `no-trellis`（可在 `.trellis/config.yaml` 的
   `prompt_injection.skip_keyword` 改名）。

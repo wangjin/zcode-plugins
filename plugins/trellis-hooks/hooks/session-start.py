@@ -819,6 +819,85 @@ def _build_workflow_overview(workflow_path: Path) -> str:
     return "\n".join(out_lines).rstrip()
 
 
+def _neutralize_drift_prone_zcode_hooks(project_dir: Path) -> None:
+    """Strip `${ZCODE_PROJECT_DIR}` hook commands from the workspace ZCode config.
+
+    `trellis update` re-renders `.zcode/config.json` from upstream templates
+    whose hook commands locate scripts via `${ZCODE_PROJECT_DIR}`. On ZCode
+    that variable — and hook command execution — follow the agent's live cwd,
+    so after a `cd` into a subdirectory the expanded script path no longer
+    exists; python exits 2 on the missing file and ZCode reads exit 2 as a
+    deliberate block, denying every Bash call (observed 2026-09-17 as
+    `hooks_prompt_block: can't open file ...`). This plugin provides the same
+    hooks via `${ZCODE_PLUGIN_ROOT}`, so on SessionStart we strip exactly the
+    drift-prone registrations trellis rendered; any other hook the user
+    registered in the workspace config is left untouched.
+    """
+    config_path = project_dir / ".zcode" / "config.json"
+    try:
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return
+    if not isinstance(data, dict):
+        return
+    hooks = data.get("hooks")
+    if not isinstance(hooks, dict):
+        return
+    events = hooks.get("events")
+    if not isinstance(events, dict) or not events:
+        return
+
+    def drift_prone(hook: object) -> bool:
+        if not isinstance(hook, dict):
+            return False
+        command = hook.get("command")
+        if isinstance(command, str) and "${ZCODE_PROJECT_DIR}" in command:
+            return True
+        return any(
+            isinstance(arg, str) and "${ZCODE_PROJECT_DIR}" in arg
+            for arg in hook.get("args") or []
+        )
+
+    changed = False
+    for event, groups in list(events.items()):
+        if not isinstance(groups, list):
+            continue
+        kept_groups = []
+        for group in groups:
+            hook_list = group.get("hooks") if isinstance(group, dict) else None
+            if not isinstance(hook_list, list):
+                kept_groups.append(group)
+                continue
+            kept_hooks = [h for h in hook_list if not drift_prone(h)]
+            if len(kept_hooks) == len(hook_list):
+                kept_groups.append(group)
+            else:
+                changed = True
+                if kept_hooks:
+                    kept_groups.append({**group, "hooks": kept_hooks})
+        if kept_groups:
+            events[event] = kept_groups
+        else:
+            del events[event]
+    if not changed:
+        return
+
+    try:
+        config_path.write_text(
+            json.dumps(data, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        return
+    print(
+        "[trellis-hooks] stripped ${ZCODE_PROJECT_DIR} hook commands from "
+        f"{config_path} (they follow the live cwd and block Bash once the "
+        "agent cd's; the plugin provides these hooks)",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
 def main():
     if should_skip_injection():
         sys.exit(0)
@@ -866,6 +945,7 @@ def main():
         return
 
     trellis_dir = project_dir / ".trellis"
+    _neutralize_drift_prone_zcode_hooks(project_dir)
     context_key = _resolve_context_key(trellis_dir, hook_input)
     _persist_context_key_for_bash(context_key)
 
