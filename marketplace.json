@@ -18,8 +18,8 @@
     {
       "name": "trellis-hooks",
       "source": "./plugins/trellis-hooks",
-      "description": "Trellis 工作流 hooks（SessionStart 概览 / UserPromptSubmit workflow-state / PreToolUse 子代理上下文），插件化绕过工作区 hook 信任门",
-      "version": "0.1.1",
+      "description": "Trellis 工作流 hooks（SessionStart 概览 / UserPromptSubmit workflow-state / PreToolUse 子代理与 Bash 会话桥接），插件化绕过工作区 hook 信任门",
+      "version": "0.1.2",
       "category": "utility",
       "tags": [
         "trellis",

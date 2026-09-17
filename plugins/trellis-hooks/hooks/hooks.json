@@ -40,6 +40,18 @@
             "enabled": true
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "process",
+            "command": "python3",
+            "args": ["${ZCODE_PLUGIN_ROOT}/hooks/inject-shell-session-context.py"],
+            "timeoutMs": 5000,
+            "enabled": true
+          }
+        ]
       }
     ]
   }

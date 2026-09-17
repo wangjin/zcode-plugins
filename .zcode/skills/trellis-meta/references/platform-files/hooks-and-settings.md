@@ -73,6 +73,12 @@ If the user says "AI did not read Trellis state":
 
 ## Platform Quirk: ZCode `ZCODE_PROJECT_DIR` follows the live cwd
 
-Unlike Claude Code (where `CLAUDE_PROJECT_DIR` is pinned to the workspace root), ZCode expands `${ZCODE_PROJECT_DIR}` — and runs hook commands — with the agent's *current* directory. Once the agent `cd`s into a subdirectory, any hook command of the form `python3 "${ZCODE_PROJECT_DIR}/.zcode/hooks/x.py"` resolves to a nonexistent path and fails with `can't open file ... [Errno 2]`.
+Unlike Claude Code (where `CLAUDE_PROJECT_DIR` is pinned to the workspace root), ZCode expands `${ZCODE_PROJECT_DIR}` — and runs hook commands — with the agent's *current* directory. Once the agent `cd`s into a subdirectory (e.g. `.trellis/tasks/<task>/`), any hook command of the form `python3 "${ZCODE_PROJECT_DIR}/.zcode/hooks/x.py"` resolves to a nonexistent path and fails with `can't open file ... [Errno 2]` (seen as `hooks_prompt_block: ...` on UserPromptSubmit).
 
-Fix pattern (already applied to local projects and the local trellis CLI template in 2026-09): the hook command must walk up from `$PWD` to locate `.zcode/hooks/<script>` instead of trusting the variable, and `session-start.py` must walk up to the `.trellis/` owner directory (the other three hook scripts already do this). Upstream: `mindfold-ai/trellis` templates (`templates/zcode/config.json`, `templates/shared-hooks/session-start.py`).
+Resolution (2026-09, trellis-hooks plugin v0.1.2): register the hooks via the **local `trellis-hooks` plugin** (`~/ZCodeProject/plugins` marketplace `zcode-toolbox`) instead of workspace `.zcode/config.json`. Plugin hooks resolve scripts through `${ZCODE_PLUGIN_ROOT}` — the plugin cache absolute path, immune to cwd drift — and the scripts themselves walk up from the hook payload cwd to the `.trellis/` owner directory (silent exit otherwise). Workspace `.zcode/config.json` keeps `"hooks": {"enabled": true, "events": {}}` so the drift-prone `${ZCODE_PROJECT_DIR}` commands never run.
+
+Notes:
+
+- Do not fix this by editing files trellis owns. Patches to the installed CLI's `dist/templates/zcode/config.json` are wiped by the next package update, and per-project `.zcode/config.json` edits trigger overwrite prompts on `trellis update` — pick **Skip** there (or re-empty `events` afterwards).
+- `session-start.py` upstream (0.6.17) still resolves the project root directly from `*_PROJECT_DIR`/cwd without an upward probe; ZCode fires SessionStart on compact/clear too, when the agent may already be in a subdirectory. The plugin copy carries a local CWD-drift guard in `main()` — re-apply it after every re-vendor from upstream templates.
+- Upstream still unfixed as of trellis 0.6.17: `mindfold-ai/trellis` `templates/zcode/config.json` (uses `${ZCODE_PROJECT_DIR}` for script paths) and `templates/shared-hooks/session-start.py` (no upward root probe).
