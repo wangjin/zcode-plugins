@@ -132,3 +132,24 @@
 ### Status
 
 [OK] **Completed**
+
+## Session 7: 搬移 zcode-speed-panel 精华到 zcode-metrics（v0.10.0）
+
+**Date**: 2026-09-20
+**Task**: 09-20-port-speed-panel-features（父）+ 5 子任务（speed-tier-color / today-usage-card / speed-accuracy-calibration / mini-speed-page / realtime-speed-spike）
+**Branch**: `main`
+
+### Summary
+
+研究 Masterchiefm/zcode-speed-panel（Tauri 桌面速度面板）后按父子任务树搬移四个功能并完成一个可行性 spike。①六档速度配色（0–40 绿→320+ 品红，柱图/会话行/趋势悬停/模型对比同数值同色，lite 降饱和、估算斜纹，TIERS 标记块单源 + index/mini 同源断言测试）；②今日用量卡片——关键发现：rollout 对今日用量覆盖率实测仅 ~17%（11.76M vs 官方 69.2M），改为 sqlite3 CLI 只读直读官方 turn_usage（computed_total = input+output，与手工对账一致），失败回退 rollout 聚合并降级标注；③口径核实（research.md：outputTokens 已含 reasoning+toolArgs、durationMs=全时长无 TTFT、model.role 恒 None 改用 querySource 判 role）+ 动态校准替换 ÷4（完整字符口径 chars=text+reasoning+toolArgs，模型分桶 median，实证默认 3.158，calibration.json 持久化+预热恢复，端到端验证 3158→1000 精确命中）；④/mini 迷你速度窗（大字六档读数+今日官方口径+会话 chips，localStorage 跟随主页聚焦）。spike 结论：进行中实时速度在 Electron 架构下不可行（rollout 完成时一次性落盘 ~260KB/条、psutil 缺失且磁盘计数看不到网络流），现状轮内吞吐即回退形态，rollout 若改流式落盘则字节×校准路径复活。验证：70/70 单测；Playwright DOM 断言 + 视觉子代理两轮审查（绿/黄绿档距、图例阈值标注、降饱和消歧均按审查意见修正）；hook 接管冒烟 4521@0.10.0。教训：ZCode 本地市场插件从 cache/<ver>/ 运行 hook，仓库升版后需在设置里更新插件否则旧 hook 会把收集器接管回旧版。spec 沉淀：backend 数据源契约 + frontend 标记块单源/配色语义/口径语义。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1543eb8` | feat(zcode-metrics): 搬移 speed-panel 精华：六档配色、今日用量官方口径、字符动态校准、迷你速度窗（v0.10.0） |
+| `961c2b6` | docs(spec): 沉淀 zcode-metrics 数据源契约与前端配色/口径约定 |
+
+### Status
+
+[OK] **Completed**
