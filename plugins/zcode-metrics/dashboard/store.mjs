@@ -208,8 +208,34 @@ export function createStore(opts = {}) {
     };
   }
 
+  /** 今日用量（自然日，本地时区 floorDay 起）。
+   *  total = Σinput + Σoutput + ΣcacheWrite（官方 input+output+reasoning+cache_creation 在本数据源的映射；
+   *  inputTokens 已实测含 cacheRead，不重复计）。input/cacheWrite 仅精确记录（估算无 usage），
+   *  output 计入全部记录（估算值占比趋近 0，README 口径说明）。avg = 吞吐加权 Σout ÷ Σdur（main+lite 合并）。 */
+  function today(now = Date.now(), sid) {
+    const start = floorDay(now);
+    let callsMain = 0, callsLite = 0, sumOut = 0, sumDur = 0, sumIn = 0, sumW = 0;
+    for (const r of byId.values()) {
+      if (r.completedAtMs < start) continue;
+      if (sid !== undefined && r.sessionId !== sid) continue;
+      if (r.role === "lite") callsLite += 1; else callsMain += 1;
+      sumOut += r.outputTokens || 0;
+      sumDur += r.durationMs || 0;
+      if (r.source === "rollout") {
+        sumIn += r.inputTokens || 0;
+        sumW += r.cacheWriteTokens || 0;
+      }
+    }
+    return {
+      startMs: start,
+      calls: { main: callsMain, lite: callsLite },
+      tokens: { input: sumIn, output: sumOut, cacheWrite: sumW, total: sumIn + sumOut + sumW },
+      avgTokPerSec: sumDur > 0 ? (sumOut / sumDur) * 1000 : null,
+    };
+  }
+
   /** snapshot 下发块（不含原始记录，AC10 体积约束）。
-   *  opts.sessionId（可选）：trend/models/cache 只统计该会话记录；缺省 = 全局（v0.2.0 口径不变）。 */
+   *  opts.sessionId（可选）：trend/models/cache/today 只统计该会话记录；缺省 = 全局（v0.2.0 口径不变）。 */
   function view(now = Date.now(), opts) {
     const sid = opts && opts.sessionId != null ? opts.sessionId : undefined;
     const t = trend(now, sid);
@@ -217,6 +243,7 @@ export function createStore(opts = {}) {
       trend: { m24: t.m24, hour: t.hour, day: t.day },
       models: models(sid),
       cache: cache(sid),
+      today: today(now, sid),
       store: { count: byId.size, since, backfilling, windowMs },
     };
   }
@@ -235,7 +262,7 @@ export function createStore(opts = {}) {
     return [...byId.values()].sort((a, b) => a.completedAtMs - b.completedAtMs);
   }
 
-  return { add, loadRecords, prune, view, trend, models, cache, setBackfilling, recent, all, size: () => byId.size };
+  return { add, loadRecords, prune, view, trend, models, cache, today, setBackfilling, recent, all, size: () => byId.size };
 }
 
 /* ---------------- history.jsonl 行编解码（短字段名契约见 design.md） ---------------- */
@@ -245,7 +272,7 @@ export function encodeRow(r) {
     v: 1, id: r.id, t: Math.round(r.completedAtMs), m: r.modelId || "unknown",
     r: r.role === "lite" ? "l" : "m", s: r.source === "estimate" ? "e" : "r",
     ot: r.outputTokens, it: r.inputTokens ?? null, cr: r.cacheReadTokens ?? null,
-    cw: r.cacheWriteTokens ?? null, d: Math.round(r.durationMs), tps: Math.round(r.tokPerSec * 100) / 100,
+    cw: r.cacheWriteTokens ?? null, ch: r.chars ?? null, d: Math.round(r.durationMs), tps: Math.round(r.tokPerSec * 100) / 100,
   });
 }
 
@@ -264,6 +291,7 @@ export function decodeRow(line) {
       inputTokens: Number.isFinite(d.it) ? d.it : null,
       cacheReadTokens: Number.isFinite(d.cr) ? d.cr : null,
       cacheWriteTokens: Number.isFinite(d.cw) ? d.cw : null,
+      chars: Number.isFinite(d.ch) ? d.ch : null,
       durationMs: d.d,
       tokPerSec: Number.isFinite(d.tps) ? d.tps : d.ot / (d.d / 1000),
       completedAtMs: d.t,

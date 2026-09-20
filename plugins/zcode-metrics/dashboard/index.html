@@ -64,12 +64,12 @@
 
   /* ————— 近 20 次柱图 ————— */
   .hist { display: flex; align-items: flex-end; gap: 3px; height: 128px; margin-top: 6px; border-bottom: 1px solid var(--line); }
-  .bar { flex: 1; min-width: 4px; border-radius: 2px 2px 0 0; background: var(--amber); position: relative; transition: height .3s; }
-  .bar:hover { background: var(--amber-hi); }
-  .bar.lite { background: var(--slate); }
+  /* 填充色 = 速度六档（--bar-c 由 tierOf 注入；lite 用降饱和档色，估算值用斜纹承载语义） */
+  .bar { flex: 1; min-width: 4px; border-radius: 2px 2px 0 0; background: var(--bar-c, var(--amber)); position: relative; transition: height .3s; }
+  .bar:hover { background: color-mix(in srgb, var(--bar-c, var(--amber)) 72%, white); }
   .bar.est {
-    background: repeating-linear-gradient(-45deg, rgba(242,166,75,.55) 0 2px, rgba(242,166,75,.08) 2px 5px);
-    box-shadow: inset 0 0 0 1px rgba(242,166,75,.3);
+    background: repeating-linear-gradient(-45deg, color-mix(in srgb, var(--bar-c, var(--amber)) 55%, transparent) 0 2px, transparent 2px 5px);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bar-c, var(--amber)) 55%, transparent);
   }
   .bar:hover::after {
     content: attr(data-tip); position: absolute; bottom: calc(100% + 6px); left: 50%;
@@ -81,9 +81,10 @@
   /* ————— 图例 ————— */
   .legend { display: flex; gap: 16px; margin-top: 10px; color: var(--dim); font-size: 11px; align-items: center; }
   .legend .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
-  .sw-main { background: var(--amber); }
-  .sw-lite { background: var(--slate); }
-  .sw-est { background: repeating-linear-gradient(-45deg, rgba(242,166,75,.55) 0 2px, rgba(242,166,75,.08) 2px 5px); box-shadow: inset 0 0 0 1px rgba(242,166,75,.3); }
+  /* 六档速度色标尺（柱图图例；档色单源在 script 的 TIERS 表） */
+  .t-scale { display: inline-flex; align-items: center; }
+  .t-scale em { font: 10px var(--mono); font-style: normal; color: var(--faint); margin: 0 3px; white-space: nowrap; }
+  .t-scale .sw { margin-right: 0; border-radius: 1px; }
   .sw-liteline { width: 14px; height: 0; border-top: 2px dashed var(--slate); border-radius: 0; vertical-align: 2px; }
   .sw-mline { display: inline-block; width: 14px; height: 2px; border-radius: 1px; margin-right: 5px; vertical-align: 2px; }
   .legend-hint { margin-left: auto; color: var(--faint); }
@@ -124,7 +125,7 @@
   .srow .sid { font: 600 12.5px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }
   .srow .sread { margin-left: auto; font: 600 12.5px var(--mono); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
   .srow .sread i { font-style: normal; font-weight: 400; color: var(--dim); font-size: 10.5px; }
-  .srow .sread.gen { color: var(--amber-hi); text-shadow: 0 0 14px rgba(255,198,110,.3); }
+  .srow .sread.gen { text-shadow: 0 0 14px color-mix(in srgb, currentColor 35%, transparent); }
   .srow .sago { color: var(--faint); font: 11px var(--mono); flex: none; white-space: nowrap; }
   .srow .l2 { color: var(--faint); font: 10.5px var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .srow .l2 b { color: var(--dim); font-weight: 600; }
@@ -168,13 +169,15 @@
   table.cmp td .cmeter { display: inline-block; width: 52px; height: 4px; border-radius: 2px; background: #2A251C; margin-left: 8px; vertical-align: 1px; overflow: hidden; }
   table.cmp td .cmeter i { display: block; height: 100%; background: var(--amber); border-radius: 2px; }
   tr.r-lite td .cmeter i { background: var(--slate); }
-  td.c-avg { color: var(--amber-hi); }
   .role-tag {
     font: 600 10px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase;
     padding: 2px 8px; border-radius: 999px; display: inline-block;
   }
   tr .role-tag { color: var(--amber); border: 1px solid rgba(242,166,75,.4); }
   tr.r-lite .role-tag { color: var(--slate); border-color: rgba(143,166,186,.4); }
+
+  /* ————— 今日用量 ————— */
+  .today-wrap { display: flex; gap: 26px; flex-wrap: wrap; margin-top: 6px; align-items: stretch; }
 
   /* ————— 缓存分析 ————— */
   .cache-wrap { display: flex; gap: 26px; flex-wrap: wrap; margin-top: 6px; align-items: stretch; }
@@ -207,16 +210,17 @@
       flex: 1 1 auto; min-height: 0; gap: 12px;
       display: grid;
       grid-template-columns: repeat(12, 1fr);
-      grid-template-rows: auto minmax(0, 13fr) minmax(0, 10fr) auto;
+      grid-template-rows: auto auto minmax(0, 13fr) minmax(0, 10fr) auto;
       grid-template-areas:
+        "tday tday tday tday tday tday tday tday tday tday tday tday"
         "sess sess sess sess sess sess sess sess det  det  det  det"
         "trnd trnd trnd trnd trnd trnd strm strm strm strm strm strm"
-        "modl modl modl modl modl modl modl cach cach cach cach cach"
+        "modl modl modl modl modl modl cach cach cach cach cach cach"
         "foot foot foot foot foot foot foot  foot foot foot foot foot";
     }
     main .grid { display: contents; }  /* 拆掉两列包装，子面板直接进全屏 Grid */
     main .panel { display: flex; flex-direction: column; min-height: 0; padding: 13px 15px; }
-    .p-sess { grid-area: sess; } .p-det  { grid-area: det; }
+    .p-today { grid-area: tday; } .p-sess { grid-area: sess; } .p-det  { grid-area: det; }
     .p-strm { grid-area: strm; } .p-trnd { grid-area: trnd; }
     .p-modl { grid-area: modl; overflow: hidden; } .p-cach { grid-area: cach; }
 
@@ -238,6 +242,12 @@
     .p-cach .hit-block { min-width: 178px; padding-right: 16px; }
     .p-cach .kpi b { font-size: 19px; }
     .p-cach #cacheNote { flex: none; }
+    /* 今日条：横排一行贴顶，占位最小化 */
+    .p-today { flex-direction: row; align-items: center; gap: 26px; }
+    .p-today .p-head { margin: 0; flex: none; }
+    .p-today #today { display: flex; gap: 26px; flex-wrap: wrap; }
+    .p-today .today-wrap { margin-top: 0; }
+    .p-today .kpi b { font-size: 19px; }
 
     footer { grid-area: foot; margin-top: 0; padding-top: 6px; flex: none; }
   }
@@ -262,12 +272,23 @@
     <h1>Token 速度仪表盘</h1>
   </div>
   <div class="hchips">
+    <button class="tab" id="miniBtn" title="打开迷你速度小窗（常驻悬浮）">迷你窗</button>
     <span class="badge" id="conn"><span class="dot" style="background:var(--red)"></span>连接中…</span>
     <span class="badge" id="src"></span>
   </div>
 </header>
 
 <main>
+  <div class="panel p-today">
+    <div class="p-head">
+      <div>
+        <div class="eyebrow">Today</div>
+        <div class="label" id="todayLabel">今日用量</div>
+      </div>
+    </div>
+    <div id="today"><div class="empty">等待数据…</div></div>
+  </div>
+
   <div class="panel p-strm">
     <div class="p-head">
       <div>
@@ -276,11 +297,7 @@
       </div>
     </div>
     <div class="hist" id="hist"><div class="empty" style="width:100%">暂无数据 —— 在 ZCode 里发一条消息，这里就会出现速度柱。</div></div>
-    <div class="legend">
-      <span><i class="sw sw-main"></i>主请求</span>
-      <span><i class="sw sw-lite"></i>后台任务(lite)</span>
-      <span><i class="sw sw-est"></i>估算值</span>
-    </div>
+    <div class="legend" id="histLegend"></div>
   </div>
 
   <div class="grid">
@@ -343,7 +360,7 @@
 
   <footer>
     <span id="ver"></span>
-    <span>数据源：~/.zcode/cli/rollout（字段缺失时以 ÷4 字符估算降级）· 历史保留 7 天（plugin-data/history.jsonl）· 会话列表为内存态（30 分钟未活跃自动下线，最多 5 个）</span>
+    <span>数据源：~/.zcode/cli/rollout（usage 缺失时按完整字符口径 × 动态校准系数估算）· 今日用量直读官方库 turn_usage · 历史保留 7 天（plugin-data/history.jsonl）· 会话列表为内存态（30 分钟未活跃自动下线，最多 5 个）</span>
   </footer>
 </main>
 
@@ -351,6 +368,31 @@
 const $ = (id) => document.getElementById(id);
 const fmt = (n, d=1) => n == null ? "—" : Number(n).toLocaleString("zh-CN", { maximumFractionDigits: d });
 const secs = (ms) => ms < 60000 ? (ms/1000).toFixed(1)+"s" : (ms/60000).toFixed(1)+"min";
+const wan = (n) => n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(n);
+
+/* TIERS-SRC-START —— 速度六档配色（单源；test/tier.test.mjs 按本标记提取求值做单测，改动须保持标记完整）
+   档色与 :root 主题部分同源（0–40 绿=--jade、160–240 橙=--amber、240–320 红=--red），改主题时同步此表 */
+const TIERS = [
+  { min: 0,   color: "#4E9C78" }, // 0–40    绿（压暗一档，与黄绿拉开色相/明度距离）
+  { min: 40,  color: "#A9C548" }, // 40–80   黄绿
+  { min: 80,  color: "#E5C558" }, // 80–160  黄
+  { min: 160, color: "#F2A64B" }, // 160–240 橙（= --amber）
+  { min: 240, color: "#E06C5F" }, // 240–320 红（= --red）
+  { min: 320, color: "#E05FB0" }, // 320+    品红
+];
+function tierDesat(hex, k = 0.6) { // 向灰度方向压 k 比例 → lite 后台任务的降饱和档色（输出统一大写 hex）
+  const n = parseInt(hex.slice(1), 16), r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  const l = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+  const m = (c) => Math.round(c + (l - c) * k).toString(16).padStart(2, "0");
+  return ("#" + m(r) + m(g) + m(b)).toUpperCase();
+}
+function tierOf(v) { // v = tok/s，含下界不含上界；非法/负值落在第 1 档
+  let i = 0;
+  for (let k = 0; k < TIERS.length; k++) if (Number(v) >= TIERS[k].min) i = k;
+  const t = TIERS[i];
+  return { i, color: t.color, muted: tierDesat(t.color) };
+}
+/* TIERS-SRC-END */
 
 function setConn(ok, msg) {
   $("conn").innerHTML = `<span class="dot" style="background:${ok ? "var(--jade)" : "var(--red)"}"></span>${msg || (ok ? "已连接" : "已断开")}`;
@@ -377,8 +419,9 @@ function render(s) {
     const max = Math.max(...h.map(x => x.tokPerSec), 1);
     $("hist").innerHTML = h.map(x => {
       const cls = x.source === "estimate" ? "est" : (x.role === "lite" ? "lite" : "");
+      const t = tierOf(x.tokPerSec);
       const tip = `${fmt(x.tokPerSec)} tok/s · ${x.outputTokens}tok · ${x.modelId}`;
-      return `<div class="bar ${cls}" style="height:${Math.max(3, x.tokPerSec/max*100)}%" data-tip="${tip}"></div>`;
+      return `<div class="bar ${cls}" style="height:${Math.max(3, x.tokPerSec/max*100)}%;--bar-c:${x.role === "lite" ? t.muted : t.color}" data-tip="${tip}"></div>`;
     }).join("");
   }
 
@@ -388,7 +431,7 @@ function render(s) {
     <div class="row"><span>模型</span><b>${l.modelId}</b></div>
     <div class="row"><span>输出 tokens</span><b class="num">${l.outputTokens}</b></div>
     <div class="row"><span>请求耗时</span><b class="num">${(l.durationMs/1000).toFixed(2)}s</b></div>
-    <div class="row"><span>速度</span><b class="num">${fmt(l.tokPerSec)} tok/s</b></div>
+    <div class="row"><span>速度</span><b class="num" style="color:${tierOf(l.tokPerSec).color}">${fmt(l.tokPerSec)} tok/s</b></div>
     <div class="row"><span>完成于</span><b>${new Date(l.completedAtMs).toLocaleTimeString("zh-CN")}</b></div>`
     : `<div class="sub">—</div>`);
 
@@ -401,9 +444,47 @@ function render(s) {
   $("trendLabel").textContent = `速度趋势（吞吐加权 tok/s${scopeSuffix}）`;
   $("modelsLabel").textContent = `模型对比（近 7 天${scopeSuffix}）`;
   $("cacheLabel").textContent = `缓存分析（近 7 天，仅精确记录${scopeSuffix}）`;
+  renderToday(
+    curScope.scoped && sess ? sess.officialToday : s.officialToday,
+    curScope.scoped && sess ? sess.today : s.today,
+    scopeSuffix,
+  );
   renderTrend();
   renderModels(curScope.scoped ? sess.models : s.models);
   renderCache(curScope.scoped ? sess.cache : s.cache);
+}
+
+/* ---------------- 今日用量（自然日，本地时区；跟随聚焦口径） ----------------
+   官方口径优先：officialToday（turn_usage 库直读，available 时）；
+   不可用（无 sqlite3 CLI/查询失败/会话未刷新）→ 回退 rollout 聚合并降级标注（覆盖率 ~17%，仅近保留文件）。 */
+function renderToday(official, fallback, scopeSuffix) {
+  const el = $("today");
+  const d = fallback ? new Date(fallback.startMs) : new Date();
+  const off = official && official.available ? official : null;
+  $("todayLabel").textContent = `今日用量 · ${d.getMonth() + 1}/${d.getDate()}${scopeSuffix} · ${off ? "官方口径" : "rollout 口径"}`;
+  if (off && off.turns === 0) {
+    el.innerHTML = `<div class="empty">今日还没有请求记录 —— 在 ZCode 里发一条消息就会开始累计。</div>`;
+    return;
+  }
+  if (off) {
+    const avg = off.avgTokPerSec;
+    el.innerHTML = `<div class="today-wrap">` +
+      `<div class="kpi"><b>${wan(off.tokens.total)}</b><span>今日 tokens（官方 computed_total = input+output）</span></div>` +
+      `<div class="kpi"><b>${fmt(off.turns, 0)}</b><span>轮（turn） · 其中 output ${wan(off.tokens.output)}</span></div>` +
+      `<div class="kpi"><b${avg != null ? ` style="color:${tierOf(avg).color}"` : ""}>${avg != null ? fmt(avg) : "—"} tok/s</b><span>平均速度（Σoutput ÷ Σduration，吞吐加权）</span></div>` +
+      `</div>`;
+    return;
+  }
+  if (!fallback || fallback.calls.main + fallback.calls.lite === 0) {
+    el.innerHTML = `<div class="empty">今日还没有请求记录 —— 在 ZCode 里发一条消息就会开始累计。</div>`;
+    return;
+  }
+  const avg = fallback.avgTokPerSec;
+  el.innerHTML = `<div class="today-wrap">` +
+    `<div class="kpi"><b>${wan(fallback.tokens.total)}</b><span>今日 tokens（input+output+cacheWrite，仅 rollout 覆盖部分）</span></div>` +
+    `<div class="kpi"><b>${fmt(fallback.calls.main + fallback.calls.lite, 0)}</b><span>调用 · 主 ${fallback.calls.main} / lite ${fallback.calls.lite}</span></div>` +
+    `<div class="kpi"><b${avg != null ? ` style="color:${tierOf(avg).color}"` : ""}>${avg != null ? fmt(avg) : "—"} tok/s</b><span>平均速度（吞吐加权 Σout ÷ Σdur）</span></div>` +
+    `</div>`;
 }
 
 /* ---------------- 会话总览列表（多会话同屏，v0.6.0；v0.9.0 行内承载实时详情） ----------------
@@ -426,12 +507,14 @@ function renderSessions(s, sessions, sel) {
     el.innerHTML = sessions.map((x) => {
       const on = sel && sel.sessionId === x.sessionId;
       const led = x.generating ? "var(--amber-hi)" : x.stale ? "var(--faint)" : "var(--jade)";
-      let read = "—", cls = "", sub = `<span class="l2">等待首个请求…</span>`;
+      let read = "—", cls = "", rc = "", sub = `<span class="l2">等待首个请求…</span>`;
       if (x.generating) {
         cls = " gen";
+        rc = tierOf(x.turn.avgTokPerSec).color;
         read = `${fmt(x.turn.avgTokPerSec)} <i>tok/s</i>`;
         sub = `<span class="l2">本轮 <b>${x.turn.requests}</b> 次 · Σ<b>${fmt(x.turn.tokens, 0)}</b> tok · 已 <b>${secs(x.turn.elapsedMs || 0)}</b>${x.last ? ` · ${esc(shortModel(x.last.modelId))}` : ""}</span>`;
       } else if (x.last) {
+        rc = tierOf(x.last.tokPerSec).color;
         read = `${fmt(x.last.tokPerSec)} <i>tok/s</i>${x.last.source === "estimate" ? ` <i>估</i>` : ""}`;
         sub = `<span class="l2">最近 ${esc(shortModel(x.last.modelId))} · <b>${x.last.outputTokens}</b> tok / ${(x.last.durationMs / 1000).toFixed(1)}s` +
           (x.closed && x.closed.tokens > 0 ? ` · 上一轮 Σ<b>${fmt(x.closed.tokens, 0)}</b>/<b>${x.closed.requests}</b>次` : "") + `</span>`;
@@ -441,14 +524,14 @@ function renderSessions(s, sessions, sel) {
       return `<button class="srow${on ? " sel" : ""}" data-sid="${esc(x.sessionId)}" aria-pressed="${on}" title="${esc(x.sessionId)}">` +
         `<span class="dot led${x.generating ? " pulse" : ""}" style="background:${led};color:${led}"></span>` +
         `<span class="smain">` +
-          `<span class="l1"><span class="sid">${esc(x.sessionId.slice(0, 13))}</span><span class="sread${cls}">${read}</span><span class="sago">${fmtAge(s.now - x.lastEventMs)}</span></span>` +
+          `<span class="l1"><span class="sid">${esc(x.sessionId.slice(0, 13))}</span><span class="sread${cls}"${rc ? ` style="color:${rc}"` : ""}>${read}</span><span class="sago">${fmtAge(s.now - x.lastEventMs)}</span></span>` +
           sub +
         `</span></button>`;
     }).join("");
   }
   const lite = s.liteCount || 0;
-  $("sessFoot").textContent = `后台任务(lite) ${lite} 次` +
-    (s.lastLite ? ` · ${fmt(s.lastLite.tokPerSec)} tok/s` : "") +
+  $("sessFoot").innerHTML = `后台任务(lite) ${lite} 次` +
+    (s.lastLite ? ` · <b style="color:${tierOf(s.lastLite.tokPerSec).color}">${fmt(s.lastLite.tokPerSec)} tok/s</b>` : "") +
     (s.lastRecordAgeMs != null ? ` · 最近更新 ${Math.round(s.lastRecordAgeMs / 1000)}s 前` : "");
 }
 
@@ -457,11 +540,16 @@ $("sessList").addEventListener("click", (e) => {
   if (!btn) return;
   const sid = btn.dataset.sid;
   selectedSid = selectedSid === sid ? null : sid; // 再点已聚焦的行 = 取消聚焦
+  try { localStorage.setItem("tsdMiniFocus", selectedSid || ""); } catch {} // 迷你窗跟随（storage 事件）
   if (lastSnap) render(lastSnap);
 });
 $("scopeAll").addEventListener("click", () => {
   selectedSid = null;
+  try { localStorage.setItem("tsdMiniFocus", ""); } catch {}
   if (lastSnap) render(lastSnap);
+});
+$("miniBtn").addEventListener("click", () => {
+  window.open("/mini", "zcode-metrics-mini", "popup=yes,width=340,height=200");
 });
 
 /* ---------------- 趋势图（示波器：折线+面积+悬停读数） ---------------- */
@@ -599,7 +687,7 @@ function renderTrend() {
       fx: x(i),
       fys: rows.map((r) => r.fy),
       html: `<div class="tt-t">${esc(lbl(b.b))}</div>` +
-        rows.map((r) => `<div class="tt-r"><i style="background:${r.color}"></i>${esc(r.label)} <b style="color:${r.color}">${fmt(r.avg)}</b> · ${r.n} 次</div>`).join(""),
+        rows.map((r) => `<div class="tt-r"><i style="background:${r.color}"></i>${esc(r.label)} <b style="color:${tierOf(r.avg).color}">${fmt(r.avg)}</b> · ${r.n} 次</div>`).join(""),
     });
   });
   trendGeom = { cols };
@@ -670,8 +758,8 @@ function renderModels(models) {
       <td class="mname" title="${esc(m.modelId)}">${esc(m.modelId)}</td>
       <td><span class="role-tag">${m.role === "lite" ? "lite" : "main"}</span></td>
       <td class="num">${m.n}</td>
-      <td class="num c-avg">${fmt(m.avg)}</td>
-      <td class="num">${fmt(m.p95)}</td>
+      <td class="num" style="color:${tierOf(m.avg).color}">${fmt(m.avg)}</td>
+      <td class="num" style="color:${tierOf(m.p95).color}">${fmt(m.p95)}</td>
       <td class="num">${fmt(m.sumOut, 0)}</td>
       <td class="num">${hitPct == null ? "—" : `${hitPct}%<span class="cmeter"><i style="width:${hitPct}%"></i></span>`}</td>
     </tr>`;
@@ -692,7 +780,6 @@ function renderCache(c) {
     return;
   }
   const pct = (v) => (v * 100).toFixed(1) + "%";
-  const wan = (n) => n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(n);
   el.innerHTML = `<div class="cache-wrap">
     <div class="hit-block">
       <b>${pct(c.hit)}</b>
@@ -708,6 +795,13 @@ function renderCache(c) {
     ? `口径：仅会话 ${curScope.name} 的记录（近 7 天）；无法归属会话的记录不参与过滤。`
     : `口径：inputTokens 已包含 cacheReadTokens（实测 usage 校验）；近 7 天共 ${s.store ? s.store.count : 0} 条记录参与聚合${s.store && s.store.backfilling ? " · ⏳ 历史回填中" : ""}。`;
 }
+
+// 柱图图例：六档色标尺（每档下界标注在色块左侧）+ 降饱和/斜纹的语义小样（一次性渲染，不随 SSE 重绘）
+const TIER_EDGES = ["0", "40", "80", "160", "240", "320+"];
+$("histLegend").innerHTML = `<span class="t-scale">` +
+  TIERS.map((t, i) => `<em>${TIER_EDGES[i]}</em><i class="sw" style="background:${t.color}" title="${TIER_EDGES[i]}${i < 5 ? "–" + TIERS[i + 1].min : "+"} tok/s"></i>`).join("") +
+  `</span><span><i class="sw" style="background:${tierOf(20).muted}"></i>后台任务(降饱和)</span>` +
+  `<span><i class="sw" style="background:repeating-linear-gradient(-45deg, var(--dim) 0 2px, transparent 2px 4px); box-shadow: inset 0 0 0 1px var(--dim)"></i>估算值(斜纹)</span>`;
 
 function connect() {
   const es = new EventSource("/events");

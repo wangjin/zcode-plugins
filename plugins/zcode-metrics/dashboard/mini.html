@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>zcode-metrics · 迷你速度</title>
+<link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="%2312100D"/><path d="M5 20 L11 20 L14 11 L18 25 L21 16 L24 20 L27 20" stroke="%23F2A64B" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>'>
+<style>
+  :root {
+    --bg: #12100D; --panel: #1A1712; --line: #2B261E;
+    --text: #EAE1D3; --dim: #9C9080; --faint: #7A7062;
+    --amber-hi: #FFC66E; --red: #E06C5F; --jade: #63B58F;
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 12px/1.45 var(--sans);
+    height: 100vh; display: flex; flex-direction: column;
+    padding: 10px 12px 8px; gap: 7px; overflow: hidden;
+    -webkit-user-select: none; user-select: none;
+  }
+  .head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .head .sid { font: 600 11px var(--mono); color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 4px; vertical-align: 1px; }
+  .dot.pulse { animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
+  .big { font: 600 44px/1.05 var(--mono); font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+  .big i { font-style: normal; font-size: 13px; font-weight: 400; color: var(--dim); margin-left: 4px; }
+  .sub { color: var(--faint); font: 10.5px var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sub b { color: var(--dim); font-weight: 600; }
+  .today { display: flex; gap: 14px; align-items: baseline; color: var(--dim); font: 11px var(--mono); flex-wrap: wrap; }
+  .today b { color: var(--text); font-weight: 600; font-size: 13px; }
+  .chips { display: flex; gap: 5px; flex-wrap: wrap; overflow: hidden; max-height: 3.4em; }
+  .chip {
+    background: transparent; border: 1px solid var(--line); color: var(--faint);
+    font: 10px var(--mono); padding: 2px 8px; border-radius: 999px; cursor: pointer;
+    transition: color .15s, border-color .15s;
+  }
+  .chip:hover { color: var(--text); }
+  .chip.on { color: var(--amber-hi); border-color: rgba(242,166,75,.45); }
+  .conn { color: var(--faint); font: 9.5px var(--mono); text-align: right; }
+  @media (prefers-reduced-motion: reduce) { .dot.pulse { animation: none !important; } }
+</style>
+</head>
+<body>
+  <div class="head">
+    <span class="sid" id="sid">—</span>
+    <span class="conn" id="conn">连接中…</span>
+  </div>
+  <div class="big" id="big">—<i>tok/s</i></div>
+  <div class="sub" id="sub">等待数据</div>
+  <div class="today" id="today"></div>
+  <div class="chips" id="chips"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const fmt = (n, d=1) => n == null ? "—" : Number(n).toLocaleString("zh-CN", { maximumFractionDigits: d });
+const wan = (n) => n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(n);
+const secs = (ms) => ms < 60000 ? (ms/1000).toFixed(1)+"s" : (ms/60000).toFixed(1)+"min";
+const shortModel = (id) => { const s = String(id).split("/"); return s[s.length - 1] || String(id); };
+
+/* TIERS-SRC-START —— 速度六档配色（单源；test/tier.test.mjs 按本标记提取求值做单测，改动须保持标记完整）
+   档色与 :root 主题部分同源（0–40 绿=--jade、160–240 橙=--amber、240–320 红=--red），改主题时同步此表 */
+const TIERS = [
+  { min: 0,   color: "#4E9C78" }, // 0–40    绿（压暗一档，与黄绿拉开色相/明度距离）
+  { min: 40,  color: "#A9C548" }, // 40–80   黄绿
+  { min: 80,  color: "#E5C558" }, // 80–160  黄
+  { min: 160, color: "#F2A64B" }, // 160–240 橙（= --amber）
+  { min: 240, color: "#E06C5F" }, // 240–320 红（= --red）
+  { min: 320, color: "#E05FB0" }, // 320+    品红
+];
+function tierDesat(hex, k = 0.6) { // 向灰度方向压 k 比例 → lite 后台任务的降饱和档色（输出统一大写 hex）
+  const n = parseInt(hex.slice(1), 16), r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  const l = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+  const m = (c) => Math.round(c + (l - c) * k).toString(16).padStart(2, "0");
+  return ("#" + m(r) + m(g) + m(b)).toUpperCase();
+}
+function tierOf(v) { // v = tok/s，含下界不含上界；非法/负值落在第 1 档
+  let i = 0;
+  for (let k = 0; k < TIERS.length; k++) if (Number(v) >= TIERS[k].min) i = k;
+  const t = TIERS[i];
+  return { i, color: t.color, muted: tierDesat(t.color) };
+}
+/* TIERS-SRC-END */
+
+// 聚焦口径：与主页面共享 localStorage 键（主页面聚焦变化时写入；空串 = 全部/自动跟随）
+const FOCUS_KEY = "tsdMiniFocus";
+let focusSid = null;
+try {
+  const v = localStorage.getItem(FOCUS_KEY);
+  focusSid = v ? v : null;
+} catch {}
+window.addEventListener("storage", (e) => {
+  if (e.key !== FOCUS_KEY) return;
+  focusSid = e.newValue ? e.newValue : null;
+  if (lastSnap) render(lastSnap);
+});
+
+let lastSnap = null;
+
+function currentSession(s) {
+  const sessions = s.sessions || [];
+  if (focusSid != null && !sessions.some((x) => x.sessionId === focusSid)) focusSid = null;
+  return focusSid != null ? sessions.find((x) => x.sessionId === focusSid) : (sessions[0] || null);
+}
+
+function render(s) {
+  if (!s) return;
+  const sess = currentSession(s);
+  const generating = s.generating && sess && sess.generating;
+  $("conn").textContent = (generating ? "生成中" : "已连接") + " · v" + (s.version || "?");
+  $("sid").textContent = sess ? sess.sessionId.slice(0, 13) : "全部会话";
+
+  // 大字读数：生成中 = 本轮吞吐；空闲 = 最近请求（tier 分档色，与主页同数值同色）
+  let num = null, sub = "暂无会话 —— 在 ZCode 里发一条消息";
+  if (sess && sess.generating) {
+    num = sess.turn.avgTokPerSec;
+    sub = `本轮 <b>${sess.turn.requests}</b> 次 · Σ<b>${fmt(sess.turn.tokens, 0)}</b> tok · 已 <b>${secs(sess.turn.elapsedMs || 0)}</b>`;
+  } else if (sess && sess.last) {
+    num = sess.last.tokPerSec;
+    sub = `${shortModel(sess.last.modelId)} · <b>${sess.last.outputTokens}</b> tok / ${(sess.last.durationMs / 1000).toFixed(1)}s` +
+      (sess.last.source === "estimate" ? " · 估" : "");
+  } else if (sess && sess.closed && sess.closed.tokens > 0) {
+    sub = `上一轮 Σ<b>${fmt(sess.closed.tokens, 0)}</b> tok · <b>${sess.closed.requests}</b> 次`;
+  }
+  $("big").innerHTML = (num != null ? fmt(num) : "—") + "<i>tok/s</i>";
+  $("big").style.color = num != null ? tierOf(num).color : "var(--dim)";
+  $("sub").innerHTML = sub;
+
+  // 今日一行：官方口径优先，回退 rollout 聚合。口径对齐主页语义：
+  // 锁定聚焦（focusSid ≠ null）= 该会话；自动跟随/全部 = 全局
+  const scoped = focusSid != null && !!sess;
+  const off = s.officialToday && s.officialToday.available ? s.officialToday : null;
+  const ft = scoped ? (sess.today || null) : (s.today || null);
+  const scopedOff = scoped ? (sess.officialToday && sess.officialToday.available ? sess.officialToday : null) : off;
+  if (scopedOff) {
+    $("today").innerHTML = `<span>今日 <b>${wan(scopedOff.tokens.total)}</b></span><span><b>${scopedOff.turns}</b> 轮</span>`;
+  } else if (ft && ft.calls.main + ft.calls.lite > 0) {
+    $("today").innerHTML = `<span>今日 <b>${wan(ft.tokens.total)}</b>（rollout 口径）</span><span><b>${ft.calls.main + ft.calls.lite}</b> 次</span>`;
+  } else {
+    $("today").innerHTML = `<span>今日 <b>0</b></span>`;
+  }
+
+  // 会话 chips：全部 + 各会话（点击本页切换聚焦，不改主页面状态）
+  const sessions = s.sessions || [];
+  let chips = `<button class="chip${focusSid == null ? " on" : ""}" data-sid="">全部</button>`;
+  for (const x of sessions) {
+    chips += `<button class="chip${focusSid === x.sessionId ? " on" : ""}" data-sid="${x.sessionId}">${x.sessionId.slice(0, 13)}${x.generating ? " ●" : ""}</button>`;
+  }
+  $("chips").innerHTML = chips;
+}
+
+$("chips").addEventListener("click", (e) => {
+  const btn = e.target.closest("button.chip");
+  if (!btn) return;
+  focusSid = btn.dataset.sid || null;
+  if (lastSnap) render(lastSnap);
+});
+
+function connect() {
+  const es = new EventSource("/events");
+  es.addEventListener("state", (e) => { try { render(JSON.parse(e.data)); } catch {} });
+  es.onerror = () => { $("conn").textContent = "断线，重连…"; };
+}
+
+fetch("/api/state").then((r) => r.json()).then((d) => { lastSnap = d; render(d); }).catch(() => {});
+connect();
+</script>
+</body>
+</html>

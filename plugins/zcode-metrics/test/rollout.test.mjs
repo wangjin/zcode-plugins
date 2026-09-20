@@ -33,11 +33,48 @@ test("lite role 保留", () => {
   assert.equal(r.role, "lite");
 });
 
-test("缺 usage → 用 text 长度/4 估算并标 estimate", () => {
-  const b = base(); delete b.response.usage; b.response.text = "a".repeat(80); // 80/4=20
-  const r = parseRolloutLine(JSON.stringify(b));
-  assert.equal(r.outputTokens, 20);
+test("缺 usage：无估算钩子 → 丢弃；有钩子 → 完整字符口径估算（text+reasoning+toolArgs）", () => {
+  const b = base();
+  delete b.response.usage;
+  b.response.text = "a".repeat(80);
+  b.response.reasoningText = "r".repeat(40);
+  b.response.toolCalls = [{ name: "Bash", arguments: { command: "ls -la" } }]; // JSON 长度计入 chars
+  // 无钩子：usage 缺失且无法估算 → null（旧 ÷4 内联估算已移除，估算统一走校准钩子）
+  assert.equal(parseRolloutLine(JSON.stringify(b)), null);
+  // 有钩子：chars = 80 + 40 + argsLen，估算与 tokPerSec 均就绪
+  let seenChars = 0, seenModel = "";
+  const r = parseRolloutLine(JSON.stringify(b), {
+    estimate: (chars, modelId) => { seenChars = chars; seenModel = modelId; return Math.round(chars / 3.2); },
+  });
+  assert.equal(seenModel, "glm-5.3");
+  assert.equal(seenChars, 80 + 40 + JSON.stringify({ command: "ls -la" }).length);
+  assert.equal(r.outputTokens, Math.round(seenChars / 3.2));
   assert.equal(r.source, "estimate");
+  assert.equal(r.needsEstimate, true);       // 估算记录永不回喂校准
+  assert.ok(r.tokPerSec > 0);
+  // arguments 为字符串形态同样计入
+  const b2 = base(); delete b2.response.usage;
+  b2.response.text = ""; b2.response.toolCalls = [{ input: "x".repeat(30) }];
+  const r2 = parseRolloutLine(JSON.stringify(b2), { estimate: (c) => Math.round(c / 3.2) });
+  assert.equal(r2.chars, 30);
+});
+
+test("role：querySource 优先（session_title→lite；main_turn/subagent→main）；缺失沿用 model.role", () => {
+  assert.equal(parseRolloutLine(JSON.stringify(base({ querySource: "session_title" }))).role, "lite");
+  assert.equal(parseRolloutLine(JSON.stringify(base({ querySource: "main_turn" }))).role, "main");
+  assert.equal(parseRolloutLine(JSON.stringify(base({ querySource: "subagent" }))).role, "main");
+  // querySource 缺失 → 旧规则兜底（向后兼容）
+  assert.equal(parseRolloutLine(JSON.stringify(base({ model: { role: "lite", modelId: "x" } }))).role, "lite");
+  assert.equal(parseRolloutLine(JSON.stringify(base())).role, "main");
+});
+
+test("精确记录带 chars / startedAtMs / needsEstimate=false", () => {
+  const r = parseRolloutLine(JSON.stringify(base({ startedAt: "2026-08-31T07:59:59.000Z" })));
+  assert.equal(r.chars, 5); // "hello"
+  assert.equal(r.needsEstimate, false);
+  assert.equal(r.startedAtMs, Date.parse("2026-08-31T07:59:59.000Z"));
+  const b3 = base(); delete b3.startedAt;
+  assert.equal(parseRolloutLine(JSON.stringify(b3)).startedAtMs, null);
 });
 
 test("非法/空/缺 duration 行 → null", () => {

@@ -228,8 +228,8 @@ function sessionView(sess, now) {
 
 /** 给 UI/SSE 的完整快照（含实时派生字段 + 7 天历史聚合视图）。
  *  顶层不再有 turn/closed/last/sessionId/stale（被 sessions[] 取代）；generating = 任一会话 active。
- *  store（可选）为 store.mjs 的 createStore 实例：传入时全局附带 trend/models/cache/store 四块，
- *  且每个会话项附带该 sid 过滤的 trend/models/cache 三块；缺省时聚合字段省略（兼容单测）。 */
+ *  store（可选）为 store.mjs 的 createStore 实例：传入时全局附带 trend/models/cache/today/store 五块，
+ *  且每个会话项附带该 sid 过滤的 trend/models/cache/today 四块；缺省时聚合字段省略（兼容单测）。 */
 export function snapshot(s, now = Date.now(), store = null) {
   const list = [...s.sessions.values()].sort((a, b) => b.lastEventMs - a.lastEventMs);
   const generating = list.some((x) => x.turn.active);
@@ -242,6 +242,7 @@ export function snapshot(s, now = Date.now(), store = null) {
       item.trend = v.trend;
       item.models = v.models;
       item.cache = v.cache;
+      item.today = v.today;
     }
     return item;
   });
@@ -263,6 +264,7 @@ export function snapshot(s, now = Date.now(), store = null) {
     out.trend = v.trend;
     out.models = v.models;
     out.cache = v.cache;
+    out.today = v.today;
     out.store = v.store;
   }
   return out;

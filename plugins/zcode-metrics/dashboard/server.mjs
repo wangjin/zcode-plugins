@@ -11,6 +11,8 @@ import { fileURLToPath } from "node:url";
 import { RolloutTail, ROLLOUT_DIR } from "./rollout.mjs";
 import { newState, applyEvent, applyRecord, tick, snapshot } from "./state.mjs";
 import { createStore, encodeRow, decodeRow, WINDOW_MS } from "./store.mjs";
+import { createOfficialToday } from "./official.mjs";
+import { createCalibration } from "./calibration.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 版本以插件 manifest 为唯一事实源（避免硬编码常量与 plugin.json 漂移，误导 hook 的版本比较）
@@ -31,13 +33,33 @@ const DATA_DIR =
   path.join(os.homedir(), ".zcode", "plugin-data", "zcode-metrics");
 const PORT_FILE = path.join(DATA_DIR, "port.json");
 const HISTORY_FILE = path.join(DATA_DIR, "history.jsonl");
+const CALIB_FILE = path.join(DATA_DIR, "calibration.json");
 const HTML_FILE = path.join(__dirname, "index.html");
+const MINI_FILE = path.join(__dirname, "mini.html");
 
 const state = newState();
 state.version = VERSION;
 const store = createStore();
+// 字符→token 动态校准（estimate 路径 + 恢复预热；详见 calibration.mjs）
+const calib = createCalibration();
+const estimateFn = (chars, modelId) => calib.estimateTokens(modelId, chars);
 const clients = new Set();
 let htmlCache = null;
+let miniCache = null;
+
+/* 校准持久化：30s 防抖 + 每日修剪时兜底（只存 median/count，删文件即回退默认系数） */
+let calibPersistTimer = null;
+function scheduleCalibPersist() {
+  if (calibPersistTimer) return;
+  calibPersistTimer = setTimeout(() => {
+    calibPersistTimer = null;
+    if (!calib.isDirty()) return;
+    writeFile(CALIB_FILE, JSON.stringify(calib.serialize()) + "\n")
+      .then(() => calib.markPersisted())
+      .catch((e) => console.error("[tsd] calibration persist failed:", e && e.message));
+  }, 30_000);
+  calibPersistTimer.unref?.();
+}
 
 /* ---------------- rollout tail（增量常态路径；启动恢复完成后激活） ---------------- */
 let tail = null;
@@ -73,12 +95,19 @@ function ingest(r) {
   appendFile(HISTORY_FILE, encodeRow(r) + "\n")
     .catch((e) => console.error("[tsd] history append failed:", e && e.message));
   applyRecord(state, r);
+  // 精确记录喂校准（chars 完整口径；采样条件在 observe 内部）
+  if (!r.needsEstimate) {
+    calib.observe(r.modelId, r.chars, r.outputTokens);
+    scheduleCalibPersist();
+  }
   return true;
 }
 
 /* ---------------- 启动：恢复 history.jsonl；缺失/为空 → 一次性回填 7 天 ---------------- */
 async function startupStore() {
   try { mkdirSync(DATA_DIR, { recursive: true }); } catch {}
+  // 0) 恢复校准预热（坏文件静默忽略；恢复失败仅影响 estimate 精度，不影响精确统计）
+  try { calib.restore(JSON.parse(readFileSync(CALIB_FILE, "utf8"))); } catch {}
   // 1) 恢复既有历史（坏行静默跳过；超窗旧行读时过滤，不重写文件）
   let loaded = 0;
   try {
@@ -94,13 +123,19 @@ async function startupStore() {
     store.setBackfilling(true);
     broadcast();
     try {
-      const bt = new RolloutTail(ROLLOUT_DIR, { fromStart: true });
+      const bt = new RolloutTail(ROLLOUT_DIR, { fromStart: true, estimate: estimateFn });
       const cutoff = Date.now() - WINDOW_MS;
       const recs = await bt.poll();
       let added = 0;
-      for (const r of recs) if (r.completedAtMs >= cutoff && store.add(r)) added++;
+      for (const r of recs) {
+        if (r.completedAtMs >= cutoff && store.add(r)) {
+          added++;
+          if (!r.needsEstimate) calib.observe(r.modelId, r.chars, r.outputTokens);
+        }
+      }
       if (added) {
         await writeFile(HISTORY_FILE, store.all().map(encodeRow).join("\n") + "\n");
+        scheduleCalibPersist();
       }
       console.error(`[tsd] backfill done: ${added}/${recs.length} records within 7d`);
     } catch (e) {
@@ -111,7 +146,7 @@ async function startupStore() {
   // 3) 实时区回放近 20 条（重启后大数字/条形图/详情立即有上下文）
   for (const r of store.recent(20)) applyRecord(state, r);
   // 4) 常态 tail：默认 seek EOF（只收启动后新增；重叠由 store 去重兜底）
-  tail = new RolloutTail(ROLLOUT_DIR, { skipOlderThan: Date.now() });
+  tail = new RolloutTail(ROLLOUT_DIR, { skipOlderThan: Date.now(), estimate: estimateFn });
   ensureWatcher();
   broadcast();
 }
@@ -129,16 +164,48 @@ const beatTimer = setInterval(() => {
     lastPruneDay = day;
     const dropped = store.prune(Date.now());
     if (dropped) console.error(`[tsd] pruned ${dropped} records older than 7d`); // append-only：不重写文件，读时过滤
+    scheduleCalibPersist(); // 日界兜底持久化（防 30s 防抖 timer 被 unref 后进程静默退出场景）
   }
   if (state.sessions.size > 0 && [...state.sessions.values()].some((x) => x.turn.active)) broadcast();
 }, 1000);
 
 function broadcast() {
   if (!clients.size) return;
-  const payload = `event: state\ndata: ${JSON.stringify(snapshot(state, Date.now(), store))}\n\n`;
+  const payload = `event: state\ndata: ${JSON.stringify(buildSnapshot())}\n\n`;
   for (const res of clients) {
     try { res.write(payload); } catch { clients.delete(res); }
   }
+}
+
+/* ---------------- 官方用量库（今日卡片主数据源；异步刷新 + 同步读缓存） ----------------
+   turn_usage 经 sqlite3 CLI 只读查询，60s 刷新（全局 + 各活跃会话）；快照构建保持纯同步，
+   官方数据以缓存并入（慢变数据，60s 陈旧可接受）。失败/缺 CLI → available:false，UI 回退 rollout。 */
+const officialToday = createOfficialToday();
+const officialCache = { all: { source: "official", available: false }, perSid: new Map() };
+function refreshOfficial() {
+  officialToday().then((v) => { officialCache.all = v; broadcast(); }).catch(() => {});
+  for (const sid of state.sessions.keys()) {
+    officialToday(undefined, sid)
+      .then((v) => officialCache.perSid.set(sid, v))
+      .catch(() => {});
+  }
+  for (const sid of officialCache.perSid.keys()) {
+    if (!state.sessions.has(sid)) officialCache.perSid.delete(sid);
+  }
+}
+const officialTimer = setInterval(refreshOfficial, 60_000);
+officialTimer.unref?.();
+refreshOfficial();
+
+/** snapshot + 官方今日块（顶层 officialToday=全局；每会话项 officialToday=sid 过滤）+ 校准视图。 */
+function buildSnapshot() {
+  const snap = snapshot(state, Date.now(), store);
+  snap.officialToday = officialCache.all;
+  snap.calibration = calib.view();
+  for (const item of snap.sessions || []) {
+    item.officialToday = officialCache.perSid.get(item.sessionId) || { source: "official", available: false };
+  }
+  return snap;
 }
 
 /* ---------------- 浏览器自动打开（每 server 生命周期一次） ---------------- */
@@ -179,6 +246,13 @@ const httpServer = http.createServer(async (req, res) => {
       if (!htmlCache) return send(500, "text/plain; charset=utf-8", "index.html missing");
       return send(200, "text/html; charset=utf-8", htmlCache);
     }
+    if (req.method === "GET" && url.pathname === "/mini") {
+      if (miniCache === null) {
+        miniCache = await readFile(MINI_FILE, "utf8").catch(() => "");
+      }
+      if (!miniCache) return send(500, "text/plain; charset=utf-8", "mini.html missing");
+      return send(200, "text/html; charset=utf-8", miniCache);
+    }
     if (req.method === "GET" && url.pathname === "/health") {
       return send(200, "application/json", JSON.stringify({ ok: true, pid: process.pid, port: state.server.port, version: VERSION }));
     }
@@ -191,7 +265,7 @@ const httpServer = http.createServer(async (req, res) => {
       return;
     }
     if (req.method === "GET" && url.pathname === "/api/state") {
-      return send(200, "application/json", JSON.stringify(snapshot(state, Date.now(), store)));
+      return send(200, "application/json", JSON.stringify(buildSnapshot()));
     }
     if (req.method === "GET" && url.pathname === "/events") {
       res.writeHead(200, {
@@ -201,7 +275,7 @@ const httpServer = http.createServer(async (req, res) => {
         "X-Accel-Buffering": "no",
       });
       res.write("retry: 3000\n\n");
-      res.write(`event: state\ndata: ${JSON.stringify(snapshot(state, Date.now(), store))}\n\n`);
+      res.write(`event: state\ndata: ${JSON.stringify(buildSnapshot())}\n\n`);
       clients.add(res);
       req.on("close", () => clients.delete(res));
       return;

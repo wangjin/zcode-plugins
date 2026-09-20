@@ -241,3 +241,54 @@ test("prune 后 since 重算", () => {
   assert.equal(v.store.count, 1);
   assert.equal(v.store.since, NOW - H);
 });
+
+/* ---------------- 今日用量（自然日聚合） ---------------- */
+
+const DAY0 = new Date("2026-08-31T00:00:00").getTime(); // 本地时区当日 00:00
+
+test("today: 自然日边界——昨日 23:59 不计入、今日 00:01 计入", () => {
+  const s = createStore();
+  s.add(rec({ id: "yest", completedAtMs: DAY0 - 60_000, outputTokens: 999, inputTokens: 999 }));
+  s.add(rec({ id: "dawn", completedAtMs: DAY0 + 60_000, outputTokens: 100, inputTokens: 1000, cacheWriteTokens: 50 }));
+  const t = s.today(NOW);
+  assert.equal(t.startMs, DAY0);
+  assert.equal(t.calls.main, 1);
+  assert.equal(t.calls.lite, 0);
+  // total = input + output + cacheWrite（官方口径映射；昨日记录不参与）
+  assert.deepEqual(t.tokens, { input: 1000, output: 100, cacheWrite: 50, total: 1150 });
+});
+
+test("today: main/lite 分列 + 吞吐加权 avg + 估算记录 output 计入、usage 不计", () => {
+  const s = createStore();
+  s.add(rec({ id: "m1", completedAtMs: NOW, outputTokens: 200, inputTokens: 1000, durationMs: 4000 }));
+  s.add(rec({ id: "m2", completedAtMs: NOW, outputTokens: 100, inputTokens: 500, durationMs: 1000 }));
+  s.add(rec({ id: "l1", completedAtMs: NOW, role: "lite", outputTokens: 40, inputTokens: 60, durationMs: 1000 }));
+  s.add(rec({ id: "e1", completedAtMs: NOW, source: "estimate", outputTokens: 80, inputTokens: null, durationMs: 2000 }));
+  const t = s.today(NOW);
+  assert.deepEqual(t.calls, { main: 3, lite: 1 }); // e1 无 role 字段默认 main
+  assert.equal(t.tokens.output, 420);              // 200+100+40+80（估算 output 计入）
+  assert.equal(t.tokens.input, 1560);              // 估算记录无 usage 不计
+  assert.equal(t.tokens.total, 1560 + 420 + 0);
+  // avg = Σout ÷ Σdur = 420 / 8000 * 1000 = 52.5
+  assert.equal(t.avgTokPerSec, 52.5);
+});
+
+test("today: sid 过滤——无 sid 记录只进全局；跨日重置由 startMs 保证", () => {
+  const s = createStore();
+  s.add(rec({ id: "a1", sessionId: "A", completedAtMs: NOW, outputTokens: 100, inputTokens: 100 }));
+  s.add(rec({ id: "n1", sessionId: null, completedAtMs: NOW, outputTokens: 50, inputTokens: 50 }));
+  assert.equal(s.today(NOW).calls.main, 2);
+  const scoped = s.today(NOW, "A");
+  assert.equal(scoped.calls.main, 1);
+  assert.equal(scoped.tokens.total, 200);
+});
+
+test("today: 空数据 → calls 0 / total 0 / avg null；view() 附带 today 块", () => {
+  const s = createStore();
+  const t = s.today(NOW);
+  assert.deepEqual(t.calls, { main: 0, lite: 0 });
+  assert.equal(t.tokens.total, 0);
+  assert.equal(t.avgTokPerSec, null);
+  const v = s.view(NOW);
+  assert.equal(v.today.calls.main, 0);
+});

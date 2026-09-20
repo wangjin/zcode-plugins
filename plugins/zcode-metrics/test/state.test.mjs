@@ -226,6 +226,11 @@ test("snapshot：sessions 排序/顶层旧字段移除/过滤聚合嵌入/store 
   assert.equal(A.cache.sumInput, 2000);
   assert.equal(B.models[0].n, 1);
   assert.ok(Array.isArray(A.trend.hour) && A.trend.hour.length === 48);
+  // 今日块跟随同一过滤口径：全局 4 条，A 会话 2 条（无 sid 记录不进会话视图）
+  assert.equal(snap.today.calls.main, 4);
+  assert.equal(A.today.calls.main, 2);
+  assert.equal(B.today.calls.main, 1);
+  assert.equal(snap.today.tokens.total, 4 * (1000 + 100));
   // 全局块（"全部"口径）：4 条全算（含无 sid）
   assert.equal(snap.models[0].n, 4);
   assert.equal(snap.store.count, 4);
@@ -235,6 +240,7 @@ test("snapshot：sessions 排序/顶层旧字段移除/过滤聚合嵌入/store 
   const plain = snapshot(s, 3000);
   assert.equal(plain.store, undefined);
   assert.equal(plain.trend, undefined);
+  assert.equal(plain.today, undefined);
   assert.equal(plain.sessions[0].trend, undefined);
   assert.equal(plain.sessions[0].models, undefined);
 });
