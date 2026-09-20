@@ -1,0 +1,18 @@
+[A0] rollout 近3天记录数: 119
+[A1] official 近3天 turn 数: 147
+[A2] 双侧都有的 turn: 3, output 精确相等: 2, ±1%内: 3
+   sess_subagent_agen/turn_05ed02c1-67d0: rollout=4028 official=4028 (req 2 vs 2)
+   sess_subagent_agen/turn_eae70ce2-1f27: rollout=9018 official=9018 (req 13 vs 13)
+   sess_76b0c6d9-4e0c/turn_1d7b3906-8013: rollout=24722 official=24707 (req 24 vs 23)
+[B1] reasoningText>1000 组: n/median/std k = (40, 2.689, 0.851)
+[B2] reasoningText==0 组:  n/median/std k = (27, 0.0, 0.028)
+[B3] 纯文本 chars/out 中位数 = 0.0（对照经验值 4.0）
+[B4] querySource 分布: {'subagent': 15, 'main_turn': 103, 'session_title': 1}
+[C1] durationMs 与 startedAt→completedAt 偏差≤50ms: 119/119 = 100.0%
+[B5] reasoning 重组 tlen/out 中位数 = 0.066  (tlen+rlen)/out = 2.624  n=41
+[B6] 有文本记录(tlen>50) tlen/out 中位数 = 0.12  n=34  其中 reasoning=0 的: 0.12  n=1
+[B7] 按模型 tlen/out（有文本记录）: {'GLM-5.3-Flash': (2, 0.408), 'GLM-5.3': (32, 0.116)}
+[B8] querySource × model.role 交叉: {'main_turn/None': 104, 'session_title/None': 1, 'subagent/None': 15}
+[B9] finishReason 分布: {'tool-calls': 105, 'stop': 3}
+[B10] 完整口径 (text+reasoning+toolArgs)/out: n=108 median=3.158
+[B11] 纯文本响应(无toolCalls无reasoning) tlen/out: n=0 median=None
