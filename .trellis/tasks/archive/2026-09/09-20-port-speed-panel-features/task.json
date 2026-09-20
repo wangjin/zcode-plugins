@@ -1,0 +1,32 @@
+{
+  "id": "port-speed-panel-features",
+  "name": "port-speed-panel-features",
+  "title": "搬移 zcode-speed-panel 精华功能到 zcode-metrics",
+  "description": "",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "wangjin",
+  "assignee": "wangjin",
+  "createdAt": "2026-09-20",
+  "completedAt": "2026-09-20",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "09-20-today-usage-card",
+    "09-20-speed-tier-color",
+    "09-20-speed-accuracy-calibration",
+    "09-20-realtime-speed-spike",
+    "09-20-mini-speed-page"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}
