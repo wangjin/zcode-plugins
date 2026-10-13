@@ -15,7 +15,7 @@ import { newState, applyEvent, applyRecord, tick, snapshot } from "./state.mjs";
 import { createStore, encodeRow, decodeRow, WINDOW_MS } from "./store.mjs";
 import { createCalibration } from "./calibration.mjs";
 import { renderSpeedCard } from "./uicard.mjs";
-import { resolveVizDir, createVizMap } from "./vizbind.mjs";
+import { resolveVizDir, createVizMap, createVizBinder } from "./vizbind.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 版本以插件 manifest 为唯一事实源（避免硬编码常量与 plugin.json 漂移，误导 hook 的版本比较）
@@ -177,28 +177,24 @@ function refreshCards() {
    卡片是静态快照（Gen UI 沙箱禁 fetch，数据全内联）；写入时机 = 会话事件（回合边界，
    force）+ 记录到达搭车（refreshCards，2s 节流）。任何失败只 stderr，不碰收集器主链路。 */
 const vizMap = createVizMap(VIZ_MAP_FILE);
-const vizResolveFail = new Map(); // sid → 上次解析失败时间（VIZ_RETRY_MS 内不重试，防每回合空转 sqlite3）
 const cardLastWrite = new Map();  // sid → 上次写卡时间（refreshCards 路径节流）
 const CARD_MIN_INTERVAL_MS = 2_000;
-const VIZ_RETRY_MS = 5 * 60_000;
+const vizBinder = createVizBinder({
+  map: vizMap,
+  resolve: (sid) => {
+    const hit = resolveVizDir(sid);
+    if (!hit) console.error(`[tsd] viz bind miss: ${sid}`); // 阶梯退避天然限频；留痕便于诊断"卡片不出现"
+    return hit ? hit.dir : null;
+  },
+});
 
-function boundVizDir(sid) {
-  const known = vizMap.get(sid);
-  if (known) return known;
-  const failedAt = vizResolveFail.get(sid);
-  if (failedAt != null && Date.now() - failedAt < VIZ_RETRY_MS) return null;
-  const hit = resolveVizDir(sid);
-  if (hit) {
-    vizMap.set(sid, hit.dir);
-    return hit.dir;
-  }
-  vizResolveFail.set(sid, Date.now());
-  return null;
+function boundVizDir(sid, { force = false } = {}) {
+  return vizBinder.bind(sid, { force });
 }
 
 function writeSpeedCard(sid, { force = false } = {}) {
   try {
-    const dir = boundVizDir(sid);
+    const dir = boundVizDir(sid, { force });
     if (!dir) return;
     const now = Date.now();
     if (!force && now - (cardLastWrite.get(sid) || 0) < CARD_MIN_INTERVAL_MS) return;

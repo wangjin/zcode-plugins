@@ -1,6 +1,6 @@
 {
   "name": "zcode-metrics",
-  "version": "0.13.2",
+  "version": "0.13.3",
   "description": "应用内 token 速度显示，两个独立开关：回复内嵌速度卡（每回合快照，大数字为上一回合平均 tok/s，柱状图逐次标注每次响应速度）与置顶悬浮速度徽章（窗口右下角实时读数，仅 macOS）。多会话并行统计、动态校准估算、7 天历史，零依赖收集器（Hook 保活 + rollout 日志精确统计）",
   "author": { "name": "wangjin" },
   "license": "MIT",

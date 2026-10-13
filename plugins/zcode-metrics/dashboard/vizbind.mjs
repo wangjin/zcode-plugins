@@ -66,6 +66,45 @@ export function resolveVizDir(sessionId, { vizRoot, tasksIndex, toleranceMs = JO
   return best ? { dir: path.join(root, best.n), dirName: best.n } : null;
 }
 
+/* 解析失败重试：阶梯短退避（2s/5s/15s/60s）快速自愈"新会话首绑瞬态失败"
+   （建会话时 task 行尚未落库 / 写入突发短暂锁库，实测首绑失败 → 卡片 5min 后才出现 →
+   模型输出的 ::visualize 引用指向空目录 → 宿主报 ENOENT）；连续失败降入 VIZ_RETRY_MS
+   常态退避（防对永远解析不了的会话按记录到达频率空转 sqlite3）。 */
+export const VIZ_RETRY_LADDER_MS = [2_000, 5_000, 15_000, 60_000];
+export const VIZ_RETRY_MS = 5 * 60_000;
+
+/**
+ * 绑定器：viz-map 缓存 + 失败阶梯退避。回合边界请求（force）绕过退避立即重试——
+ * 每条消息仅一两次，sqlite3 单查 ~10ms，换取卡片随消息及时出现。
+ * @param deps.resolve(sid)->absDir|null  @param deps.map {get,set}（createVizMap 实例兼容）  @param now ()->ms
+ * @returns { bind(sid, {force}) -> absDir|null }
+ */
+export function createVizBinder({ resolve, map, now = Date.now }) {
+  const fails = new Map(); // sid → { at, count }
+  return {
+    bind(sid, { force = false } = {}) {
+      const cached = map.get(sid);
+      if (cached) return cached;
+      const prev = fails.get(sid);
+      if (prev && !force) {
+        const wait =
+          prev.count <= VIZ_RETRY_LADDER_MS.length
+            ? VIZ_RETRY_LADDER_MS[prev.count - 1]
+            : VIZ_RETRY_MS;
+        if (now() - prev.at < wait) return null;
+      }
+      const dir = resolve(sid);
+      if (dir) {
+        fails.delete(sid); // 成功清零：再次失败从阶梯第 1 级重新开始
+        map.set(sid, dir);
+        return dir;
+      }
+      fails.set(sid, { at: now(), count: (prev ? prev.count : 0) + 1 });
+      return null;
+    },
+  };
+}
+
 /** 持久化缓存（sid → 绝对目录）。坏文件静默忽略；save 失败静默（缓存丢失只影响一次解析成本）。 */
 export function createVizMap(mapFile, { readFileSyncImpl, writeFileSyncImpl, mkdirSyncImpl } = {}) {
   const rf = readFileSyncImpl || readFileSync;
