@@ -1,16 +1,31 @@
 {
   "name": "zcode-metrics",
-  "version": "0.10.0",
-  "description": "实时 + 7 天历史仪表盘：多会话并行统计、模型输出速度（tok/s，六档配色）、今日用量（官方口径直读）、速度趋势、模型对比、缓存命中、迷你速度小窗；动态校准的字符估算；零依赖本地收集器，Hook 保活 + rollout 日志精确统计",
+  "version": "0.12.0",
+  "description": "实时 + 7 天历史仪表盘：多会话并行统计、模型输出速度（tok/s，六档配色）、今日用量（官方口径直读）、速度趋势、模型对比、缓存命中、迷你速度小窗；动态校准的字符估算；零依赖本地收集器，Hook 保活 + rollout 日志精确统计；置顶速度徽章（输入框右下角实时速度，自动跟随最近活跃会话）；Gen UI 回复内嵌速度卡（可选）",
   "author": { "name": "wangjin" },
   "license": "MIT",
-  "keywords": ["token", "metrics", "speed", "dashboard", "monitor", "cache", "sessions"],
+  "keywords": ["token", "metrics", "speed", "dashboard", "monitor", "cache", "sessions", "badge", "gen-ui"],
+  "skills": "./skills",
   "userConfig": {
     "openDashboard": {
       "type": "boolean",
       "title": "新会话自动打开仪表盘",
       "description": "收集器启动后的第一个新会话会自动在浏览器打开本地仪表盘（http://127.0.0.1:<port>）。关闭后可随时手动打开，地址见插件数据目录的 port.json。",
       "default": true,
+      "required": false
+    },
+    "speedBadge": {
+      "type": "boolean",
+      "title": "置顶速度徽章（macOS）",
+      "description": "会话启动时在 ZCode 窗口输入框右下角弹出置顶微型速度徽章（仅速度读数，自动跟随最近活跃会话，可拖动、双击退出）。仅 macOS。",
+      "default": true,
+      "required": false
+    },
+    "speedCard": {
+      "type": "boolean",
+      "title": "回复内嵌速度卡（Gen UI，默认关）",
+      "description": "每回合在回复末尾内联显示本会话 token 速度卡（最近回合速度 + 近 24 次响应柱状图）。默认关闭；开启后每回合会向模型注入一行引用提醒。",
+      "default": false,
       "required": false
     }
   }

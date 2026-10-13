@@ -3,7 +3,7 @@
 import http from "node:http";
 import { spawn } from "node:child_process";
 import { readFile, writeFile, appendFile } from "node:fs/promises";
-import { watch, mkdirSync, unlinkSync, readFileSync } from "node:fs";
+import { watch, mkdirSync, unlinkSync, readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { randomUUID } from "node:crypto";
@@ -13,6 +13,8 @@ import { newState, applyEvent, applyRecord, tick, snapshot } from "./state.mjs";
 import { createStore, encodeRow, decodeRow, WINDOW_MS } from "./store.mjs";
 import { createOfficialToday } from "./official.mjs";
 import { createCalibration } from "./calibration.mjs";
+import { renderSpeedCard } from "./uicard.mjs";
+import { resolveVizDir, createVizMap } from "./vizbind.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 版本以插件 manifest 为唯一事实源（避免硬编码常量与 plugin.json 漂移，误导 hook 的版本比较）
@@ -34,6 +36,9 @@ const DATA_DIR =
 const PORT_FILE = path.join(DATA_DIR, "port.json");
 const HISTORY_FILE = path.join(DATA_DIR, "history.jsonl");
 const CALIB_FILE = path.join(DATA_DIR, "calibration.json");
+const VIZ_MAP_FILE = path.join(DATA_DIR, "viz-map.json");
+const BADGE_BIN = path.join(__dirname, "..", "bin", "tsd-badge");
+const BADGE_PID_FILE = path.join(DATA_DIR, "badge.pid");
 const HTML_FILE = path.join(__dirname, "index.html");
 const MINI_FILE = path.join(__dirname, "mini.html");
 
@@ -71,7 +76,7 @@ async function pollRollout() {
     const recs = await tail.poll();
     let fresh = 0;
     for (const r of recs) if (ingest(r)) fresh++;
-    if (fresh) broadcast();
+    if (fresh) { broadcast(); refreshCards(); }
   } catch (e) {
     console.error("[tsd] poll error:", e && e.message);
   } finally {
@@ -166,7 +171,7 @@ const beatTimer = setInterval(() => {
     if (dropped) console.error(`[tsd] pruned ${dropped} records older than 7d`); // append-only：不重写文件，读时过滤
     scheduleCalibPersist(); // 日界兜底持久化（防 30s 防抖 timer 被 unref 后进程静默退出场景）
   }
-  if (state.sessions.size > 0 && [...state.sessions.values()].some((x) => x.turn.active)) broadcast();
+  if (state.sessions.size > 0 && [...state.sessions.values()].some((x) => x.turn.active)) { broadcast(); refreshCards(); }
 }, 1000);
 
 function broadcast() {
@@ -175,6 +180,11 @@ function broadcast() {
   for (const res of clients) {
     try { res.write(payload); } catch { clients.delete(res); }
   }
+}
+
+/* 无浏览器客户端时 broadcast 短路，卡片仍要随记录到达刷新（生成中的会话 mid-turn 更新） */
+function refreshCards() {
+  for (const sid of state.sessions.keys()) writeSpeedCard(sid);
 }
 
 /* ---------------- 官方用量库（今日卡片主数据源；异步刷新 + 同步读缓存） ----------------
@@ -196,6 +206,46 @@ function refreshOfficial() {
 const officialTimer = setInterval(refreshOfficial, 60_000);
 officialTimer.unref?.();
 refreshOfficial();
+
+/* ---------------- Gen UI 速度卡：会话 → 可视化目录绑定 + 片段写出 ----------------
+   卡片是静态快照（Gen UI 沙箱禁 fetch，数据全内联）；写入时机 = 会话事件（回合边界，
+   force）+ broadcast 搭车（记录到达，2s 节流）。任何失败只 stderr，不碰收集器主链路。 */
+const vizMap = createVizMap(VIZ_MAP_FILE);
+const vizResolveFail = new Map(); // sid → 上次解析失败时间（VIZ_RETRY_MS 内不重试，防每回合空转 sqlite3）
+const cardLastWrite = new Map();  // sid → 上次写卡时间（broadcast 路径节流）
+const CARD_MIN_INTERVAL_MS = 2_000;
+const VIZ_RETRY_MS = 5 * 60_000;
+
+function boundVizDir(sid) {
+  const known = vizMap.get(sid);
+  if (known) return known;
+  const failedAt = vizResolveFail.get(sid);
+  if (failedAt != null && Date.now() - failedAt < VIZ_RETRY_MS) return null;
+  const hit = resolveVizDir(sid);
+  if (hit) {
+    vizMap.set(sid, hit.dir);
+    return hit.dir;
+  }
+  vizResolveFail.set(sid, Date.now());
+  return null;
+}
+
+function writeSpeedCard(sid, { force = false } = {}) {
+  try {
+    const dir = boundVizDir(sid);
+    if (!dir) return;
+    const now = Date.now();
+    if (!force && now - (cardLastWrite.get(sid) || 0) < CARD_MIN_INTERVAL_MS) return;
+    cardLastWrite.set(sid, now);
+    const sv = snapshot(state, now, store).sessions.find((x) => x.sessionId === sid);
+    if (!sv) return; // 无会话桶（server 刚重启）：不写，等下个 hook 事件建桶
+    const records = store.all().filter((r) => r.sessionId === sid);
+    const html = renderSpeedCard({ session: sv, records, today: store.today(now, sid) });
+    if (html) writeFile(path.join(dir, "token-speed.html"), html).catch(() => {});
+  } catch (e) {
+    console.error("[tsd] speed card failed:", e && e.message);
+  }
+}
 
 /** snapshot + 官方今日块（顶层 officialToday=全局；每会话项 officialToday=sid 过滤）+ 校准视图。 */
 function buildSnapshot() {
@@ -219,6 +269,62 @@ function maybeOpenDashboard() {
     p.on("error", () => {});
     p.unref();
   } catch { /* 打不开就手动开 */ }
+}
+
+/* ---------------- 置顶速度徽章（macOS · bin/tsd-badge，输入框右下角实时速度） ----------------
+   收集器每生命周期只拉起一次（badge.pid 存活即跳过）；窗口矩形经 osascript 查询（1.2s 预算，
+   失败徽章自行落主屏右下角）；收集器退出时一并收掉（cleanup），徽章失联 15s 也会自杀。 */
+let badgeTried = false;
+function badgePidAlive() {
+  try {
+    const { pid } = JSON.parse(readFileSync(BADGE_PID_FILE, "utf8"));
+    if (!pid) return false;
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function zcodeWindowRect(cb) {
+  if (process.platform !== "darwin") return cb(null);
+  const osa = spawn("osascript", [
+    "-e",
+    'tell application "System Events" to tell (first process whose name is "ZCode") to get {position, size} of front window',
+  ], { stdio: ["ignore", "pipe", "ignore"] });
+  const t = setTimeout(() => { try { osa.kill(); } catch {} }, 1200);
+  t.unref?.();
+  let out = "";
+  osa.stdout.on("data", (c) => { out += c; });
+  osa.on("error", () => { clearTimeout(t); cb(null); });
+  osa.on("close", (code) => {
+    clearTimeout(t);
+    const m = code === 0 ? out.trim().match(/^(-?\d+), (-?\d+), (\d+), (\d+)$/) : null;
+    cb(m ? [Number(m[1]), Number(m[2]), Number(m[3]), Number(m[4])] : null);
+  });
+}
+function maybeSpawnBadge() {
+  if (badgeTried || state.server.port == null) return;
+  badgeTried = true;
+  if (process.platform !== "darwin") return; // 徽章目前仅 macOS（badge/badge.swift）
+  if (!existsSync(BADGE_BIN)) {
+    console.error("[tsd] badge binary missing: bin/tsd-badge（badge/build.sh 可重建）");
+    return;
+  }
+  if (badgePidAlive()) return; // 旧收集器退出/接管期间徽章仍活着：不重复弹
+  zcodeWindowRect((rect) => {
+    try {
+      const child = spawn(BADGE_BIN, [String(state.server.port), DATA_DIR, ...(rect || [])], {
+        detached: true,
+        stdio: "ignore",
+      });
+      child.on("error", (e) => console.error("[tsd] badge spawn failed:", e && e.message));
+      child.unref();
+      writeFile(BADGE_PID_FILE, JSON.stringify({ pid: child.pid, startedAt: new Date().toISOString() }))
+        .catch(() => {});
+    } catch (e) {
+      console.error("[tsd] badge spawn error:", e && e.message);
+    }
+  });
 }
 
 /* ---------------- HTTP ---------------- */
@@ -290,9 +396,13 @@ const httpServer = http.createServer(async (req, res) => {
         ev.estimatedOutputTokens = Math.round(ev.lastAssistantMessage.length / 4);
       }
       applyEvent(state, ev);
-      if (ev.kind === "session_start" && ev.openDashboard !== false) maybeOpenDashboard();
+      if (ev.kind === "session_start") {
+        if (ev.openDashboard !== false) maybeOpenDashboard();
+        if (ev.speedBadge !== false) maybeSpawnBadge();
+      }
       pollRollout(); // 提交后立即拉一次增量，不等 2s 轮询
       broadcast();
+      if (ev.sessionId) writeSpeedCard(ev.sessionId, { force: true }); // 回合边界：立即落卡（Stop 后卡片即终值）
       return send(200, "application/json", '{"ok":true}');
     }
     send(404, "application/json", '{"error":"not found"}');
@@ -335,6 +445,11 @@ listenWithRetry()
 
 function cleanup() {
   try { unlinkSync(PORT_FILE); } catch {}
+  try {
+    const { pid } = JSON.parse(readFileSync(BADGE_PID_FILE, "utf8"));
+    if (pid) process.kill(pid, "SIGTERM");
+  } catch {}
+  try { unlinkSync(BADGE_PID_FILE); } catch {}
   process.exit(0);
 }
 process.on("SIGTERM", cleanup);

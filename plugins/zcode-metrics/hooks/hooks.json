@@ -1,5 +1,5 @@
 {
-  "description": "Token speed dashboard：拉起/保活本地收集器，并在 turn 边界（提交=起点 T₁、停止=收尾）上报事件。所有 hook 仅返回空结果，不向模型注入任何上下文。",
+  "description": "Token speed dashboard：拉起/保活本地收集器，并在 turn 边界（提交=起点 T₁、停止=收尾）上报事件。除 UserPromptSubmit 在 speedCard 开启时注入一行 Gen UI 速度卡引用提醒外，其余 hook 仅返回空结果。",
   "hooks": {
     "SessionStart": [
       {
@@ -11,7 +11,8 @@
             "args": [
               "${ZCODE_PLUGIN_ROOT}/hooks/ensure.mjs",
               "session_start",
-              "${user_config.openDashboard}"
+              "${user_config.openDashboard}",
+              "${user_config.speedBadge}"
             ],
             "timeoutMs": 3000,
             "enabled": true
@@ -25,7 +26,7 @@
           {
             "type": "process",
             "command": "node",
-            "args": ["${ZCODE_PLUGIN_ROOT}/hooks/ensure.mjs", "user_prompt_submit"],
+            "args": ["${ZCODE_PLUGIN_ROOT}/hooks/ensure.mjs", "user_prompt_submit", "${user_config.speedCard}"],
             "timeoutMs": 1500,
             "enabled": true
           }

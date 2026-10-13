@@ -29,6 +29,12 @@ const OWN_VERSION = ownVersion();
 const kind = process.argv[2] || "user_prompt_submit";
 // 第三个参数来自 hooks.json 的 ${user_config.openDashboard} 模板替换
 const openDashboard = (process.argv[3] || "true") !== "false";
+// UserPromptSubmit 时第三个参数是 ${user_config.speedCard}（速度卡引用提醒开关）
+const speedCard = kind === "user_prompt_submit" ? (process.argv[3] || "true") !== "false" : false;
+// SessionStart 时第四个参数是 ${user_config.speedBadge}（置顶速度徽章开关）
+const speedBadge = kind === "session_start" ? (process.argv[4] || "true") !== "false" : undefined;
+// stdout 输出（默认 "{}"；UserPromptSubmit 且 speedCard 开启时替换为单行提醒）
+let outJson = "{}";
 
 async function readStdin() {
   return new Promise((resolve) => {
@@ -164,6 +170,7 @@ async function main() {
     sessionId: input.session_id || input.sessionId || null,
     ts: Date.now(),
   };
+  if (speedBadge !== undefined) payload.speedBadge = speedBadge;
   // Stop 事件带最后一条助手消息：仅透传内容给 server 计数（server 端只取长度估算，不留存）
   if (kind === "stop" && typeof input.last_assistant_message === "string") {
     payload.lastAssistantMessage = input.last_assistant_message;
@@ -182,13 +189,38 @@ async function main() {
     if (!port) return; // server 起不来：静默退出（exit 0 = 会话无感知）
   }
   await postEvent(port, payload);
+  // UserPromptSubmit 且开启速度卡：注入一行引用提醒（唯一一处向模型注入的上下文，字节数刻意压到最小）。
+  // 路径来自收集器维护的 viz-map 缓存（首回合可能未命中 → 给目录式提示，模型从自身 Desktop Context 拿目录）。
+  if (kind === "user_prompt_submit" && speedCard && payload.sessionId) {
+    const dir = cachedVizDir(payload.sessionId);
+    const ref = dir
+      ? `::visualize{"path":${JSON.stringify(path.join(dir, "token-speed.html"))}}`
+      : `::visualize{"path":"<你的会话可视化目录>/token-speed.html"}`;
+    outJson = JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: "UserPromptSubmit",
+        additionalContext: `[zcode-metrics] token 速度卡：在本回合最终回复的末尾单独一行原样输出 ${ref}（不要代码围栏、不要 Markdown 链接）。`,
+      },
+    });
+  }
+}
+
+/* viz-map 只读缓存（收集器写入；此处读失败/未命中 → 目录式提示，不阻塞） */
+function cachedVizDir(sessionId) {
+  try {
+    const m = JSON.parse(readFileSync(path.join(DATA_DIR, "viz-map.json"), "utf8"));
+    const v = m && m[sessionId];
+    return typeof v === "string" && path.isAbsolute(v) ? v : null;
+  } catch {
+    return null;
+  }
 }
 
 main().catch((e) => {
   try { process.stderr.write(`[tsd-ensure] ${e && e.message}\n`); } catch {}
 }).finally(() => {
   // stdout 协议纪律：process 型 hook 必须给出合法 JSON 或空输出。
-  // 返回空对象 = 无权限决策、无 additionalContext，绝不污染模型上下文。
-  try { process.stdout.write("{}"); } catch {}
+  // 默认空对象 = 无权限决策、无 additionalContext，不污染模型上下文；速度卡开启时为单行提醒。
+  try { process.stdout.write(outJson); } catch {}
   process.exit(0);
 });
