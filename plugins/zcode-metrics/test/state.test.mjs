@@ -215,7 +215,7 @@ test("snapshot：sessions 排序/顶层旧字段移除/过滤聚合嵌入/store 
   for (const gone of ["turn", "closed", "last", "sessionId", "stale"]) {
     assert.equal(snap[gone], undefined, `顶层不应再有 ${gone}`);
   }
-  // sessions 按 lastEventMs 降序：B(2000) → A(1500)
+  // sessions 按 lastUserMs（最近用户交互）降序：B(2000) → A(1000)；A 的记录(1500)只影响 lastEventMs
   assert.deepEqual(snap.sessions.map((x) => x.sessionId), ["B", "A"]);
   const B = snap.sessions[0], A = snap.sessions[1];
   assert.equal(A.turn.tokens, 100);
@@ -243,4 +243,15 @@ test("snapshot：sessions 排序/顶层旧字段移除/过滤聚合嵌入/store 
   assert.equal(plain.today, undefined);
   assert.equal(plain.sessions[0].trend, undefined);
   assert.equal(plain.sessions[0].models, undefined);
+});
+
+test("sessions[0] = 最近用户交互的会话（当前会话）：后台会话的记录到达不抢占", () => {
+  const s = newState();
+  applyEvent(s, { kind: "user_prompt_submit", sessionId: "A" }, 1000); // A 曾是当前会话
+  applyEvent(s, { kind: "user_prompt_submit", sessionId: "B" }, 2000); // 用户切到 B（最后交互）
+  applyRecord(s, rec({ sessionId: "A" }), 9000); // A 后台生成、记录持续到达（只刷 lastEventMs）
+  const snap = snapshot(s, 9500);
+  assert.deepEqual(snap.sessions.map((x) => x.sessionId), ["B", "A"], "徽章跟随的 sessions[0] 应为 B");
+  assert.ok(snap.sessions[0].lastUserMs > snap.sessions[1].lastUserMs, "会话视图暴露 lastUserMs");
+  assert.equal(bucket(s, "A").lastEventMs, 9000, "A 的记录仍刷新 lastEventMs（保活/淘汰用）");
 });

@@ -1,7 +1,8 @@
 // zcode-metrics · 置顶速度徽章（macOS, AppKit, 零第三方依赖）
 // 用法: tsd-badge <port> [x y] [dataDir]
 // 行为: 无边框浮动面板（不抢焦点、置顶、跨 Space），每秒 GET /api/state，
-//       自动跟随最近活跃会话；生成中显示本轮平均速度，空闲显示上一回合/最近响应。
+//       跟随当前会话（最近一次提交消息/打开的会话，后台其他会话生成不抢占）；
+//       生成中显示本轮平均速度，空闲显示上一回合/最近响应。
 //       0.5s 轮询 CGWindowList 跟随 ZCode 窗口移动/缩放（按右下角增量平移，无需辅助功能权限）。
 //       可拖动（位置持久化到 <dataDir>/badge-pos.json，优先于窗口右下角默认位），双击退出；收集器失联 15s 自动退出。
 import AppKit
@@ -24,7 +25,7 @@ extension NSColor {
   }
 }
 
-// MARK: - /api/state 最小解析（sessions 已按 lastEventMs 降序，取首个 = 最近活跃会话）
+// MARK: - /api/state 最小解析（sessions 已按 lastUserMs 降序，取首个 = 当前会话）
 struct SessionView {
   let generating: Bool
   let turnAvg: Double?; let turnElapsedMs: Double
@@ -209,7 +210,7 @@ final class Badge: NSObject, NSApplicationDelegate, NSWindowDelegate {
       return
     }
     healthFails = 0
-    // 最近活跃会话（sessions[0]）；大数字口径与 UI 卡 hero 一致：生成中本轮 → 上一回合 → 最近响应
+    // 当前会话（sessions[0] = 最近用户交互的会话）；大数字口径与 UI 卡 hero 一致：生成中本轮 → 上一回合 → 最近响应
     let v: Double?
     let generating: Bool
     if let s = sessions.first {

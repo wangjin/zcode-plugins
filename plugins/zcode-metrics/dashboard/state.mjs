@@ -27,6 +27,7 @@ function newSession(sid, now) {
     sessionId: sid,
     firstSeenMs: now,
     lastEventMs: now,
+    lastUserMs: now, // 最近一次用户交互（session_start / user_prompt_submit）：徽章跟随的"当前会话"依据
     turn: {
       active: false,
       sessionId: sid,
@@ -114,6 +115,7 @@ export function applyEvent(s, ev, now = Date.now()) {
     case "user_prompt_submit": {
       if (sid == null) break; // 无 sid 无法建桶（hook 正常都带；防御分支）
       const sess = ensureSession(s, sid, now);
+      sess.lastUserMs = now; // 用户交互（打开会话/提交消息）= 切换"当前会话"；防抖分支也要更新
       // 桶内 60s 防抖：仅 session_start（视为重复事件，不重置轮次）；user_prompt_submit 无条件新轮
       if (ev.kind === "session_start" && sess.turn.active && now - (sess.turn.lastEventMs || 0) < 60_000) break;
       startTurn(sess, now);
@@ -211,6 +213,7 @@ function sessionView(sess, now) {
   return {
     sessionId: sess.sessionId,
     lastEventMs: sess.lastEventMs,
+    lastUserMs: sess.lastUserMs,
     generating,
     stale: generating && now - sess.lastEventMs > 120_000,
     turn: {
@@ -231,7 +234,9 @@ function sessionView(sess, now) {
  *  store（可选）为 store.mjs 的 createStore 实例：传入时全局附带 trend/models/cache/today/store 五块，
  *  且每个会话项附带该 sid 过滤的 trend/models/cache/today 四块；缺省时聚合字段省略（兼容单测）。 */
 export function snapshot(s, now = Date.now(), store = null) {
-  const list = [...s.sessions.values()].sort((a, b) => b.lastEventMs - a.lastEventMs);
+  // 按"最近用户交互"排序：sessions[0] = 当前会话（徽章跟随它）。
+  // 后台会话的记录到达只刷新 lastEventMs（用于淘汰/保活），不改变当前会话归属。
+  const list = [...s.sessions.values()].sort((a, b) => b.lastUserMs - a.lastUserMs);
   const generating = list.some((x) => x.turn.active);
   const lastRecordAge = s.lastRecordMs ? now - s.lastRecordMs : null;
   const hasStore = !!(store && typeof store.view === "function");
