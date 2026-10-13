@@ -153,3 +153,17 @@
 ### Status
 
 [OK] **Completed**
+
+## Session 8 · 2026-10-13 · 修复 v0.13.x 速度显示"时而显示时而不显示"
+
+用户报"速度时而显示时而不显示"。诊断（全部实证，无猜测）：收集器健康、事件正常到达、curl 直打 /internal/event 带 speedBadge:true 徽章秒拉、手动 true true 提醒正常——唯独真实会话零注入零拉起。根因：ZCode **不在 hook args 展开 ${user_config.\*}**（仅 MCP server 配置展开，zcode-guide 文档白名单确证），字面量传入 ensure.mjs；0.12.0 宽松解析 !== "false"（字面量=开）掩盖了问题，**0.13.0 改严格 === "true"（字面量=关）立即翻车**——速度卡提醒从不注入、徽章从不自动拉起；11:33 更新触发接管 cleanup 杀掉手动徽章后彻底全灭。rollout 请求体取证：更新后会话提醒注入 0 次（注意系统提示里技能描述含同名字样，须用注入文本独有短语计数）。修复（10-13-fix-userconfig-template，v0.13.2，8e35813）：hooks/userflags.mjs 三级解析（显式 true/false > ~/.zcode/cli/config.json plugins.options[目录名后缀] > plugin.json 默认），8 项新单测全套 81/81，字面量参数端到端验收通过。教训：验证 hook 传参必须用字面量模板模拟真实调用，true true 手动路径会掩盖展开问题。spec 沉淀 backend/zcode-plugin-hooks.md。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8e35813` | fix(zcode-metrics): v0.13.2 hook 开关失效修复——user_config 模板不在 hook args 展开，回退读客户端配置 |
+
+### Status
+
+[OK] **Completed**
