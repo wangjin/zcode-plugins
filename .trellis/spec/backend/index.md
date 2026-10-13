@@ -19,6 +19,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Error Handling](./error-handling.md) | Error types, handling strategies | To fill |
 | [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | To fill |
 | [Logging Guidelines](./logging-guidelines.md) | Structured logging, log levels | To fill |
+| [ZCode Plugin Hooks](./zcode-plugin-hooks.md) | Hook 参数模板变量白名单（user_config 不展开）与插件读配置的兜底模式 | Active |
 
 ---
 

@@ -4,6 +4,7 @@ ZCode 插件：**应用内**显示各会话的模型输出速度（tok/s）。�
 
 > v0.13.0：网页仪表盘（index/mini/SSE/自动打开浏览器）已按需求移除，只保留应用内展示；HTTP 仅剩 `/api/state` `/health` `/shutdown` `/internal/event` 内部端点。
 > v0.13.1：速度卡柱状图柱顶直接标注速度值（不再依赖悬停）；大数字口径说明写明"平均"；配置文案按功能命名；修徽章三个失效场景——会话中途打开开关不生效（现在每条消息都携带开关，即时拉起）、恢复会话不触发（SessionStart matcher 补 resume）、收集器接管后徽章消失不补拉（改为徽章不在即补拉）；徽章文字垂直居中、0.5s 跟随 ZCode 窗口移动、自管 badge.pid 防重复弹；徽章跟随"当前会话"（最近用户交互，后台会话生成不抢占）。
+> v0.13.2：修复 v0.13.0 起开关全部失效的缺陷——ZCode 不在 hook args 展开 `${user_config.*}`（字面量传入 ensure.mjs，被严格解析判为"关"），导致速度卡提醒从不注入、徽章从不自动拉起；现在开关解析为：显式 true/false 参数 > 客户端配置 `~/.zcode/cli/config.json` 的 `plugins.options` > plugin.json 默认值（`hooks/userflags.mjs`，新增 8 项单测）。
 
 ## 两种展示形态（独立开关，可分别启停）
 

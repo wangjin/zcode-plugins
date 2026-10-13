@@ -6,7 +6,7 @@
       "name": "zcode-metrics",
       "source": "./plugins/zcode-metrics",
       "description": "应用内 token 速度显示：回复内嵌速度卡（每回合快照 + 近 24 次响应速度柱状图）+ 置顶悬浮徽章（实时读数），多会话并行统计与动态校准估算",
-      "version": "0.13.1",
+      "version": "0.13.2",
       "category": "utility",
       "tags": [
         "token",

@@ -1,6 +1,7 @@
 // zcode-metrics · Hook 子进程：幂等保活收集器 + 转发 hook 事件 + 升级接管
 // 用法：node ensure.mjs <kind> [userConfig 开关]   （stdin: hook JSON 一行；
-// 第三个参数按 kind 不同：user_prompt_submit → speedCard，session_start → speedBadge）
+// 第三个参数按 kind 不同：user_prompt_submit → speedCard，session_start → speedBadge。
+// 开关参数可能是 ZCode 未展开的 ${user_config.*} 字面量 → userflags.mjs 兜底解析）
 // 预算：fetch 400ms + spawn 后等待 ≤700ms；接管路径额外 ≤(1500+500)ms，总时长 < hooks.json timeoutMs(1500/3000)。
 // 纪律：stdout 只输出一行 "{}"（不向模型注入任何内容），诊断走 stderr，任何异常退出码 0。
 import { spawn } from "node:child_process";
@@ -9,6 +10,7 @@ import { openSync, mkdirSync, closeSync, readFileSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
+import { createFlagResolver } from "./userflags.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SERVER = path.join(__dirname, "..", "dashboard", "server.mjs");
@@ -29,15 +31,18 @@ const OWN_VERSION = ownVersion();
 
 const kind = process.argv[2] || "user_prompt_submit";
 // 开关参数按事件类型不同（hooks.json 模板替换）：
-// · user_prompt_submit → argv[3] ${user_config.speedCard} 速度卡（默认开：缺省/空串视为 true）
-//                        argv[4] ${user_config.speedBadge} 徽章（默认关：缺省/空串视为 false）
+// · user_prompt_submit → argv[3] ${user_config.speedCard} 速度卡（默认开）
+//                        argv[4] ${user_config.speedBadge} 徽章（默认关）
+// · session_start      → argv[3] ${user_config.speedBadge} 置顶徽章开关（默认关）
+// 注意：ZCode 不在 hook args 展开 ${user_config.*}（原样传字面量），resolver 兜底回退读
+// 客户端配置文件 ~/.zcode/cli/config.json，再落 plugin.json 默认值（详见 userflags.mjs）。
 //   徽章开关随每条消息上报：会话中途打开开关立即生效，收集器接管/徽章退出后下一条消息自动补拉
-// · session_start      → argv[3] ${user_config.speedBadge} 置顶徽章开关（默认关：缺省/空串视为 false）
 const cardArg = process.argv[3];
 const badgeArg = process.argv[4];
-const speedCard = kind === "user_prompt_submit" ? (cardArg || "true") === "true" : false;
+const resolveFlag = createFlagResolver({ dataDirName: path.basename(DATA_DIR) });
+const speedCard = kind === "user_prompt_submit" ? resolveFlag(cardArg, "speedCard") : false;
 const speedBadge =
-  kind === "session_start" ? cardArg === "true" : kind === "user_prompt_submit" ? badgeArg === "true" : undefined;
+  kind === "session_start" ? resolveFlag(cardArg, "speedBadge") : kind === "user_prompt_submit" ? resolveFlag(badgeArg, "speedBadge") : undefined;
 // stdout 输出（默认 "{}"；UserPromptSubmit 且 speedCard 开启时替换为单行提醒）
 let outJson = "{}";
 
