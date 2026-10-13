@@ -1,7 +1,7 @@
 // zcode-metrics · Gen UI 速度卡渲染器（纯函数，无 IO，可单测）
 // 产物是 ZCode 会话内联 HTML 片段（::visualize 引用渲染）：无 fetch/XHR/WebSocket（沙箱 CSP 禁止），
-// 数据全部内联；不用任何脚本（静态快照卡，规避脚本运行时差异）；配色复用 index.html 的六档语义。
-// 注意：TIERS 与 index.html 的 TIERS-SRC 标记块必须保持一致（test/uicard.test.mjs 双向校验）。
+// 数据全部内联；不用任何脚本（静态快照卡，规避脚本运行时差异）。
+// 注意：TIERS 档色表与 badge/badge.swift 的 tiers 表必须保持一致（test/uicard.test.mjs 跨语言校验）。
 
 export const TIERS = [
   { min: 0, color: "#4E9C78" }, // 0–40    绿

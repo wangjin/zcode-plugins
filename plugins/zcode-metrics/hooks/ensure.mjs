@@ -1,5 +1,6 @@
 // zcode-metrics · Hook 子进程：幂等保活收集器 + 转发 hook 事件 + 升级接管
-// 用法：node ensure.mjs <kind> [openDashboard]   （stdin: hook JSON 一行）
+// 用法：node ensure.mjs <kind> [userConfig 开关]   （stdin: hook JSON 一行；
+// 第三个参数按 kind 不同：user_prompt_submit → speedCard，session_start → speedBadge）
 // 预算：fetch 400ms + spawn 后等待 ≤700ms；接管路径额外 ≤(1500+500)ms，总时长 < hooks.json timeoutMs(1500/3000)。
 // 纪律：stdout 只输出一行 "{}"（不向模型注入任何内容），诊断走 stderr，任何异常退出码 0。
 import { spawn } from "node:child_process";
@@ -27,12 +28,12 @@ function ownVersion() {
 const OWN_VERSION = ownVersion();
 
 const kind = process.argv[2] || "user_prompt_submit";
-// 第三个参数来自 hooks.json 的 ${user_config.openDashboard} 模板替换
-const openDashboard = (process.argv[3] || "true") !== "false";
-// UserPromptSubmit 时第三个参数是 ${user_config.speedCard}（速度卡引用提醒开关）
-const speedCard = kind === "user_prompt_submit" ? (process.argv[3] || "true") !== "false" : false;
-// SessionStart 时第四个参数是 ${user_config.speedBadge}（置顶速度徽章开关）
-const speedBadge = kind === "session_start" ? (process.argv[4] || "true") !== "false" : undefined;
+// 第三个参数按事件类型不同（hooks.json 模板替换）：
+// · user_prompt_submit → ${user_config.speedCard}：第一版 Gen UI 速度卡开关（默认开：缺省/空串视为 true）
+// · session_start      → ${user_config.speedBadge}：第二版置顶徽章开关（默认关：缺省/空串视为 false）
+const cardArg = process.argv[3];
+const speedCard = kind === "user_prompt_submit" ? (cardArg || "true") === "true" : false;
+const speedBadge = kind === "session_start" ? cardArg === "true" : undefined;
 // stdout 输出（默认 "{}"；UserPromptSubmit 且 speedCard 开启时替换为单行提醒）
 let outJson = "{}";
 
@@ -166,7 +167,6 @@ async function main() {
 
   const payload = {
     kind,
-    openDashboard,
     sessionId: input.session_id || input.sessionId || null,
     ts: Date.now(),
   };

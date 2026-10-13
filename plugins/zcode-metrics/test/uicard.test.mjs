@@ -1,4 +1,4 @@
-// Gen UI 速度卡单测：TIERS 与 index.html 单源一致、片段契约（无脚本/无 fetch/根 id/柱数/档色）
+// Gen UI 速度卡单测：TIERS 与 badge.swift 跨语言一致、片段契约（无脚本/无 fetch/根 id/柱数/档色）
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -6,17 +6,20 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { TIERS, tierOf, renderSpeedCard } from "../dashboard/uicard.mjs";
 
-const html = readFileSync(
-  path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "dashboard", "index.html"),
+const swift = readFileSync(
+  path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "badge", "badge.swift"),
   "utf8",
 );
 
-test("uicard TIERS 与 index.html 的 TIERS-SRC 标记块一致（单源防漂移）", () => {
-  const block = html.match(/TIERS-SRC-START[\s\S]*?TIERS-SRC-END/);
-  assert.ok(block, "index.html 缺 TIERS-SRC 标记块");
-  const uiTiersMatch = block[0].match(/const TIERS = (\[[\s\S]*?\]);/);
-  assert.ok(uiTiersMatch, "标记块内缺 TIERS 表");
-  assert.deepEqual(TIERS, eval(uiTiersMatch[1])); // eslint-disable-line no-eval
+test("TIERS 与 badge.swift 的档色表一致（JS/Swift 双端单源，防漂移）", () => {
+  const m = swift.match(/let tiers: \[\(min: Double, color: NSColor\)\] = \[([\s\S]*?)\]/);
+  assert.ok(m, "badge.swift 缺 tiers 表");
+  const pairs = [...m[1].matchAll(/\((\d+),\s*NSColor\(hex: 0x([0-9A-Fa-f]{6})\)\)/g)];
+  assert.equal(pairs.length, TIERS.length, "badge.swift 与 uicard.mjs 档数一致");
+  pairs.forEach((p, i) => {
+    assert.equal(Number(p[1]), TIERS[i].min, `第 ${i} 档 min 一致`);
+    assert.equal("#" + p[2].toUpperCase(), TIERS[i].color.toUpperCase(), `第 ${i} 档色值一致`);
+  });
 });
 
 test("tierOf 档位边界（含下界不含上界）", () => {

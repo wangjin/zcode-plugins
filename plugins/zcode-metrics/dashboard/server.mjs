@@ -1,5 +1,7 @@
-// zcode-metrics · 常驻收集器：tail rollout → store(7d 持久化+聚合) → 状态机 → HTTP/SSE 仪表盘
-// 零依赖，仅监听 127.0.0.1。由 hooks/ensure.mjs 幂等拉起，不建议直接手动运行。
+// zcode-metrics · 常驻收集器：tail rollout → store(7d 持久化+聚合) → 状态机 → HTTP API
+// （v0.13.0 起网页仪表盘已移除：应用内展示 = Gen UI 速度卡 + 置顶徽章；
+//   HTTP 仅保留 /api/state /health /shutdown /internal/event 内部端点。仅监听 127.0.0.1。）
+// 零依赖，由 hooks/ensure.mjs 幂等拉起，不建议直接手动运行。
 import http from "node:http";
 import { spawn } from "node:child_process";
 import { readFile, writeFile, appendFile } from "node:fs/promises";
@@ -11,7 +13,6 @@ import { fileURLToPath } from "node:url";
 import { RolloutTail, ROLLOUT_DIR } from "./rollout.mjs";
 import { newState, applyEvent, applyRecord, tick, snapshot } from "./state.mjs";
 import { createStore, encodeRow, decodeRow, WINDOW_MS } from "./store.mjs";
-import { createOfficialToday } from "./official.mjs";
 import { createCalibration } from "./calibration.mjs";
 import { renderSpeedCard } from "./uicard.mjs";
 import { resolveVizDir, createVizMap } from "./vizbind.mjs";
@@ -39,8 +40,6 @@ const CALIB_FILE = path.join(DATA_DIR, "calibration.json");
 const VIZ_MAP_FILE = path.join(DATA_DIR, "viz-map.json");
 const BADGE_BIN = path.join(__dirname, "..", "bin", "tsd-badge");
 const BADGE_PID_FILE = path.join(DATA_DIR, "badge.pid");
-const HTML_FILE = path.join(__dirname, "index.html");
-const MINI_FILE = path.join(__dirname, "mini.html");
 
 const state = newState();
 state.version = VERSION;
@@ -48,9 +47,6 @@ const store = createStore();
 // 字符→token 动态校准（estimate 路径 + 恢复预热；详见 calibration.mjs）
 const calib = createCalibration();
 const estimateFn = (chars, modelId) => calib.estimateTokens(modelId, chars);
-const clients = new Set();
-let htmlCache = null;
-let miniCache = null;
 
 /* 校准持久化：30s 防抖 + 每日修剪时兜底（只存 median/count，删文件即回退默认系数） */
 let calibPersistTimer = null;
@@ -76,7 +72,7 @@ async function pollRollout() {
     const recs = await tail.poll();
     let fresh = 0;
     for (const r of recs) if (ingest(r)) fresh++;
-    if (fresh) { broadcast(); refreshCards(); }
+    if (fresh) refreshCards();
   } catch (e) {
     console.error("[tsd] poll error:", e && e.message);
   } finally {
@@ -126,7 +122,6 @@ async function startupStore() {
   // 2) 空历史 → 首启一次性回填（fromStart 全量读 rollout，过滤 7d，批量覆盖写 history.jsonl）
   if (!loaded) {
     store.setBackfilling(true);
-    broadcast();
     try {
       const bt = new RolloutTail(ROLLOUT_DIR, { fromStart: true, estimate: estimateFn });
       const cutoff = Date.now() - WINDOW_MS;
@@ -153,7 +148,6 @@ async function startupStore() {
   // 4) 常态 tail：默认 seek EOF（只收启动后新增；重叠由 store 去重兜底）
   tail = new RolloutTail(ROLLOUT_DIR, { skipOlderThan: Date.now(), estimate: estimateFn });
   ensureWatcher();
-  broadcast();
 }
 const storeReady = startupStore().catch((e) => console.error("[tsd] startup error:", e && e.stack));
 
@@ -171,48 +165,20 @@ const beatTimer = setInterval(() => {
     if (dropped) console.error(`[tsd] pruned ${dropped} records older than 7d`); // append-only：不重写文件，读时过滤
     scheduleCalibPersist(); // 日界兜底持久化（防 30s 防抖 timer 被 unref 后进程静默退出场景）
   }
-  if (state.sessions.size > 0 && [...state.sessions.values()].some((x) => x.turn.active)) { broadcast(); refreshCards(); }
+  if (state.sessions.size > 0 && [...state.sessions.values()].some((x) => x.turn.active)) refreshCards();
 }, 1000);
 
-function broadcast() {
-  if (!clients.size) return;
-  const payload = `event: state\ndata: ${JSON.stringify(buildSnapshot())}\n\n`;
-  for (const res of clients) {
-    try { res.write(payload); } catch { clients.delete(res); }
-  }
-}
-
-/* 无浏览器客户端时 broadcast 短路，卡片仍要随记录到达刷新（生成中的会话 mid-turn 更新） */
+/* 卡片随记录到达刷新（生成中的会话 mid-turn 更新，writeSpeedCard 内部 2s 节流） */
 function refreshCards() {
   for (const sid of state.sessions.keys()) writeSpeedCard(sid);
 }
 
-/* ---------------- 官方用量库（今日卡片主数据源；异步刷新 + 同步读缓存） ----------------
-   turn_usage 经 sqlite3 CLI 只读查询，60s 刷新（全局 + 各活跃会话）；快照构建保持纯同步，
-   官方数据以缓存并入（慢变数据，60s 陈旧可接受）。失败/缺 CLI → available:false，UI 回退 rollout。 */
-const officialToday = createOfficialToday();
-const officialCache = { all: { source: "official", available: false }, perSid: new Map() };
-function refreshOfficial() {
-  officialToday().then((v) => { officialCache.all = v; broadcast(); }).catch(() => {});
-  for (const sid of state.sessions.keys()) {
-    officialToday(undefined, sid)
-      .then((v) => officialCache.perSid.set(sid, v))
-      .catch(() => {});
-  }
-  for (const sid of officialCache.perSid.keys()) {
-    if (!state.sessions.has(sid)) officialCache.perSid.delete(sid);
-  }
-}
-const officialTimer = setInterval(refreshOfficial, 60_000);
-officialTimer.unref?.();
-refreshOfficial();
-
 /* ---------------- Gen UI 速度卡：会话 → 可视化目录绑定 + 片段写出 ----------------
    卡片是静态快照（Gen UI 沙箱禁 fetch，数据全内联）；写入时机 = 会话事件（回合边界，
-   force）+ broadcast 搭车（记录到达，2s 节流）。任何失败只 stderr，不碰收集器主链路。 */
+   force）+ 记录到达搭车（refreshCards，2s 节流）。任何失败只 stderr，不碰收集器主链路。 */
 const vizMap = createVizMap(VIZ_MAP_FILE);
 const vizResolveFail = new Map(); // sid → 上次解析失败时间（VIZ_RETRY_MS 内不重试，防每回合空转 sqlite3）
-const cardLastWrite = new Map();  // sid → 上次写卡时间（broadcast 路径节流）
+const cardLastWrite = new Map();  // sid → 上次写卡时间（refreshCards 路径节流）
 const CARD_MIN_INTERVAL_MS = 2_000;
 const VIZ_RETRY_MS = 5 * 60_000;
 
@@ -247,28 +213,11 @@ function writeSpeedCard(sid, { force = false } = {}) {
   }
 }
 
-/** snapshot + 官方今日块（顶层 officialToday=全局；每会话项 officialToday=sid 过滤）+ 校准视图。 */
+/** snapshot + 校准视图（/api/state：徽章轮询与调试用）。 */
 function buildSnapshot() {
   const snap = snapshot(state, Date.now(), store);
-  snap.officialToday = officialCache.all;
   snap.calibration = calib.view();
-  for (const item of snap.sessions || []) {
-    item.officialToday = officialCache.perSid.get(item.sessionId) || { source: "official", available: false };
-  }
   return snap;
-}
-
-/* ---------------- 浏览器自动打开（每 server 生命周期一次） ---------------- */
-let openedOnce = false;
-function maybeOpenDashboard() {
-  if (openedOnce || !state.server.port) return;
-  openedOnce = true;
-  if (process.platform !== "darwin") return;
-  try {
-    const p = spawn("open", [`http://127.0.0.1:${state.server.port}/`], { stdio: "ignore", detached: true });
-    p.on("error", () => {});
-    p.unref();
-  } catch { /* 打不开就手动开 */ }
 }
 
 /* ---------------- 置顶速度徽章（macOS · bin/tsd-badge，输入框右下角实时速度） ----------------
@@ -345,20 +294,6 @@ const httpServer = http.createServer(async (req, res) => {
     res.end(body);
   };
   try {
-    if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
-      if (htmlCache === null) {
-        htmlCache = await readFile(HTML_FILE, "utf8").catch(() => "");
-      }
-      if (!htmlCache) return send(500, "text/plain; charset=utf-8", "index.html missing");
-      return send(200, "text/html; charset=utf-8", htmlCache);
-    }
-    if (req.method === "GET" && url.pathname === "/mini") {
-      if (miniCache === null) {
-        miniCache = await readFile(MINI_FILE, "utf8").catch(() => "");
-      }
-      if (!miniCache) return send(500, "text/plain; charset=utf-8", "mini.html missing");
-      return send(200, "text/html; charset=utf-8", miniCache);
-    }
     if (req.method === "GET" && url.pathname === "/health") {
       return send(200, "application/json", JSON.stringify({ ok: true, pid: process.pid, port: state.server.port, version: VERSION }));
     }
@@ -373,19 +308,6 @@ const httpServer = http.createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/api/state") {
       return send(200, "application/json", JSON.stringify(buildSnapshot()));
     }
-    if (req.method === "GET" && url.pathname === "/events") {
-      res.writeHead(200, {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-store",
-        Connection: "keep-alive",
-        "X-Accel-Buffering": "no",
-      });
-      res.write("retry: 3000\n\n");
-      res.write(`event: state\ndata: ${JSON.stringify(buildSnapshot())}\n\n`);
-      clients.add(res);
-      req.on("close", () => clients.delete(res));
-      return;
-    }
     if (req.method === "POST" && url.pathname === "/internal/event") {
       const raw = await readBody(req);
       let ev = null;
@@ -396,12 +318,8 @@ const httpServer = http.createServer(async (req, res) => {
         ev.estimatedOutputTokens = Math.round(ev.lastAssistantMessage.length / 4);
       }
       applyEvent(state, ev);
-      if (ev.kind === "session_start") {
-        if (ev.openDashboard !== false) maybeOpenDashboard();
-        if (ev.speedBadge !== false) maybeSpawnBadge();
-      }
+      if (ev.kind === "session_start" && ev.speedBadge === true) maybeSpawnBadge(); // 第二版徽章（默认关）
       pollRollout(); // 提交后立即拉一次增量，不等 2s 轮询
-      broadcast();
       if (ev.sessionId) writeSpeedCard(ev.sessionId, { force: true }); // 回合边界：立即落卡（Stop 后卡片即终值）
       return send(200, "application/json", '{"ok":true}');
     }
