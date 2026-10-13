@@ -24,42 +24,52 @@ const wan = (n) =>
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 const SPARK_MAX = 24; // 柱数上限（近 24 次模型响应）
+const LABEL_ALL_MAX = 10; // 柱数 ≤ 此值时每柱都标数值；更多时只标最新柱 + 最高柱
 
-/** 近 SPARK_MAX 条 main 记录 → 柱状 sparkline SVG（旧→新，右端为最新）。
- *  每柱 fill 用该次速度的档色；悬停 title 给出明细。records 为升序。 */
+/** 近 SPARK_MAX 条 main 记录 → 柱状 sparkline（旧→新，右端为最新）。
+ *  每柱 fill 用该次速度的档色；柱顶直接标注速度值（≤LABEL_ALL_MAX 柱全标，否则只标最新 + 最高；
+ *  文案是 HTML 覆盖层而非 SVG text：svg preserveAspectRatio=none 横向拉伸会把 text 字形拉变形）。
+ *  悬停 title 仍给出完整明细。records 为升序。 */
 function sparkline(records) {
   const rs = records.filter((r) => r.role === "main").slice(-SPARK_MAX);
   if (!rs.length) return "";
   const W = 240, H = 44, GAP = 2, BONUS = 4; // BONUS = 最新一柱右侧留白
   const bw = (W - BONUS - GAP * (rs.length - 1)) / rs.length;
   const max = Math.max(...rs.map((r) => r.tokPerSec), 1);
+  const maxIdx = rs.reduce((mi, r, i) => (r.tokPerSec > rs[mi].tokPerSec ? i : mi), 0);
+  const labelSet = new Set([rs.length - 1, maxIdx]);
   let bars = "";
+  let labels = "";
   rs.forEach((r, i) => {
     const h = Math.max(2, (r.tokPerSec / max) * (H - 2));
     const x = i * (bw + GAP);
     const newest = i === rs.length - 1;
     bars += `<rect x="${x.toFixed(1)}" y="${(H - h).toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" rx="1" fill="${tierOf(r.tokPerSec).color}" opacity="${newest ? 1 : 0.75}"><title>${esc(fmt1(r.tokPerSec) + " tok/s · " + wan(r.outputTokens) + " tok · " + (r.modelId || "?"))}</title></rect>`;
+    if (rs.length <= LABEL_ALL_MAX || labelSet.has(i)) {
+      const cx = ((x + bw / 2) / W) * 100;
+      labels += `<span class="tsd-sc-bl${newest ? " tsd-sc-bl-new" : ""}" style="left:${cx.toFixed(1)}%;bottom:${(h + 3).toFixed(1)}px">${esc(fmt1(r.tokPerSec))}</span>`;
+    }
   });
   const lo = Math.min(...rs.map((r) => r.tokPerSec));
   const hi = Math.max(...rs.map((r) => r.tokPerSec));
-  return `<svg class="tsd-sc-spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="本会话最近 ${rs.length} 次模型响应速度柱状图，范围 ${fmt1(lo)} 至 ${fmt1(hi)} tok/s">${bars}</svg>`;
+  return `<div class="tsd-sc-sparkwrap"><svg class="tsd-sc-spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="本会话最近 ${rs.length} 次模型响应速度柱状图（柱顶标注速度值），范围 ${fmt1(lo)} 至 ${fmt1(hi)} tok/s">${bars}</svg>${labels}</div>`;
 }
 
 /** 大数字区块的主速度与口径说明。
- *  优先级：closed（上一回合合计）> turn 进行中平均 > last（最近一次响应）。 */
+ *  优先级：closed（上一回合合计平均）> turn 进行中平均 > last（最近一次响应）。 */
 function hero(session) {
   if (session.closed && Number.isFinite(session.closed.avgTokPerSec)) {
     const c = session.closed;
     return {
       v: c.avgTokPerSec,
-      note: `上一回合 · ${c.durationSec < 60 ? c.durationSec.toFixed(1) + "s" : (c.durationSec / 60).toFixed(1) + "min"} · ${wan(c.tokens)} tok · ${c.requests} 次响应${c.estimated ? " · 估" : ""}`,
+      note: `上一回合平均 · ${c.durationSec < 60 ? c.durationSec.toFixed(1) + "s" : (c.durationSec / 60).toFixed(1) + "min"} · ${wan(c.tokens)} tok · ${c.requests} 次响应${c.estimated ? " · 估" : ""}`,
     };
   }
   if (session.generating && Number.isFinite(session.turn.avgTokPerSec)) {
     const elapsed = session.turn.elapsedMs / 1000;
     return {
       v: session.turn.avgTokPerSec,
-      note: `本回合进行中 · ${elapsed < 60 ? elapsed.toFixed(1) + "s" : (elapsed / 60).toFixed(1) + "min"} · ${wan(session.turn.tokens)} tok · ${session.turn.requests} 次响应`,
+      note: `本回合平均 · 进行中 ${elapsed < 60 ? elapsed.toFixed(1) + "s" : (elapsed / 60).toFixed(1) + "min"} · ${wan(session.turn.tokens)} tok · ${session.turn.requests} 次响应`,
     };
   }
   if (session.last && Number.isFinite(session.last.tokPerSec)) {
@@ -97,7 +107,10 @@ export function renderSpeedCard({ session, records = [], today = null }) {
 #tsd-speed-card .tsd-sc-num{font-size:28px;font-weight:500;font-variant-numeric:tabular-nums;line-height:1.1;color:${tier.color}}
 #tsd-speed-card .tsd-sc-unit{font-size:12px;color:var(--muted-foreground,inherit)}
 #tsd-speed-card .tsd-sc-note{font-size:11px;color:var(--muted-foreground,inherit);margin-left:auto;text-align:right}
-#tsd-speed-card .tsd-sc-spark{display:block;width:100%;height:44px}
+#tsd-speed-card .tsd-sc-sparkwrap{position:relative;height:58px;margin-top:2px}
+#tsd-speed-card .tsd-sc-spark{display:block;width:100%;height:44px;position:absolute;left:0;bottom:0}
+#tsd-speed-card .tsd-sc-bl{position:absolute;transform:translateX(-50%);font-size:9px;line-height:1;color:var(--muted-foreground,inherit);font-variant-numeric:tabular-nums;white-space:nowrap;opacity:.9}
+#tsd-speed-card .tsd-sc-bl-new{left:auto;right:2px;transform:none}
 #tsd-speed-card .tsd-sc-foot{display:flex;justify-content:space-between;gap:8px;font-size:11px;color:var(--muted-foreground,inherit);margin-top:4px}
   </style>
   <div class="tsd-sc-head">

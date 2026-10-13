@@ -68,13 +68,32 @@ test("大数字走 closed（上一回合）口径并按档色着色；柱数 = m
   assert.ok(out.includes("今日输出"), "有今日输出块");
 });
 
+test("柱顶速度值标注：≤10 柱全标，>10 柱只标最新 + 最高；标签是 HTML 覆盖层不在 SVG 内", () => {
+  const few = renderSpeedCard({ session: session(), records: [rec(30), rec(55.5), rec(48)], today: null });
+  const fewLabels = [...few.matchAll(/class="tsd-sc-bl[^"]*"/g)];
+  assert.equal(fewLabels.length, 3, "3 柱应全标");
+  assert.ok(few.includes(">55.5</span>") && few.includes(">48.0</span>"), "标签内容为该柱速度值");
+  assert.ok(!/<text/.test(few), "数值不用 SVG text（横向拉伸会变形）");
+
+  const records = Array.from({ length: 20 }, (_, i) => rec(20 + i * 10)); // 升序：最高 = 最新
+  const many = renderSpeedCard({ session: session(), records, today: null });
+  const manyLabels = [...many.matchAll(/class="tsd-sc-bl[^"]*"/g)];
+  assert.equal(manyLabels.length, 1, "最高柱即最新柱时只标 1 个，不重复");
+  assert.ok(many.includes("tsd-sc-bl-new"), "最新柱标签右对齐防溢出");
+
+  const vShape = [rec(90), ...Array.from({ length: 15 }, () => rec(30)), rec(40)]; // 最高在第 0 柱
+  const vOut = renderSpeedCard({ session: session(), records: vShape, today: null });
+  assert.equal((vOut.match(/class="tsd-sc-bl/g) || []).length, 2, "最高柱与最新柱分开时标 2 个");
+  assert.ok(vOut.includes(">90.0</span>") && vOut.includes(">40.0</span>"));
+});
+
 test("closed 缺失时回退：生成中用 turn 口径，否则用 last；无数据显示等待文案", () => {
   const gen = renderSpeedCard({
     session: session({ generating: true, closed: null, turn: { startedAtMs: 0, elapsedMs: 8000, tokens: 260, requests: 2, avgTokPerSec: 32.5, sawStop: false } }),
     records: [rec(32.5)],
     today: null,
   });
-  assert.ok(gen.includes("本回合进行中") && gen.includes(">32.5<") && gen.includes("生成中"));
+  assert.ok(gen.includes("本回合平均") && gen.includes(">32.5<") && gen.includes("生成中"));
 
   const lastOnly = renderSpeedCard({
     session: session({ closed: null, last: { tokPerSec: 210, outputTokens: 500, source: "rollout" } }),

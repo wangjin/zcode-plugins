@@ -221,8 +221,9 @@ function buildSnapshot() {
 }
 
 /* ---------------- 置顶速度徽章（macOS · bin/tsd-badge，输入框右下角实时速度） ----------------
-   收集器每生命周期只拉起一次（badge.pid 存活即跳过）；窗口矩形经 osascript 查询（1.2s 预算，
-   失败徽章自行落主屏右下角）；收集器退出时一并收掉（cleanup），徽章失联 15s 也会自杀。 */
+   speedBadge 开启时由事件驱动拉起（session_start / user_prompt_submit），徽章不在即补拉
+   （badge.pid 存活即跳过：pid 检查只读一个小文件，每条消息都查也无感）；窗口矩形经 osascript
+   查询（1.2s 预算，失败徽章自行落主屏右下角）；收集器退出时一并收掉（cleanup），徽章失联 15s 也会自杀。 */
 let badgeTried = false;
 function badgePidAlive() {
   try {
@@ -253,13 +254,13 @@ function zcodeWindowRect(cb) {
 }
 function maybeSpawnBadge() {
   if (badgeTried || state.server.port == null) return;
-  badgeTried = true;
   if (process.platform !== "darwin") return; // 徽章目前仅 macOS（badge/badge.swift）
   if (!existsSync(BADGE_BIN)) {
+    badgeTried = true; // 二进制缺失：每生命周期只告警一次，不反复打日志
     console.error("[tsd] badge binary missing: bin/tsd-badge（badge/build.sh 可重建）");
     return;
   }
-  if (badgePidAlive()) return; // 旧收集器退出/接管期间徽章仍活着：不重复弹
+  if (badgePidAlive()) return; // 徽章仍活着（接管期间/用户双击退出前的窗口）：不重复弹
   zcodeWindowRect((rect) => {
     try {
       const child = spawn(BADGE_BIN, [String(state.server.port), DATA_DIR, ...(rect || [])], {
@@ -318,7 +319,7 @@ const httpServer = http.createServer(async (req, res) => {
         ev.estimatedOutputTokens = Math.round(ev.lastAssistantMessage.length / 4);
       }
       applyEvent(state, ev);
-      if (ev.kind === "session_start" && ev.speedBadge === true) maybeSpawnBadge(); // 第二版徽章（默认关）
+      if (ev.speedBadge === true) maybeSpawnBadge(); // 置顶徽章：session_start / user_prompt_submit 均触发（接管重启或徽章退出后自动补拉）
       pollRollout(); // 提交后立即拉一次增量，不等 2s 轮询
       if (ev.sessionId) writeSpeedCard(ev.sessionId, { force: true }); // 回合边界：立即落卡（Stop 后卡片即终值）
       return send(200, "application/json", '{"ok":true}');

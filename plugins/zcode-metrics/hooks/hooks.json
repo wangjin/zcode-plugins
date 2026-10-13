@@ -1,9 +1,9 @@
 {
-  "description": "Token speed：拉起/保活本地收集器，并在 turn 边界（提交=起点 T₁、停止=收尾）上报事件。UserPromptSubmit 在 speedCard 开启（第一版，默认开）时注入一行 Gen UI 速度卡引用提醒；SessionStart 在 speedBadge 开启（第二版，默认关）时拉起置顶徽章。其余 hook 仅返回空结果。",
+  "description": "Token speed：拉起/保活本地收集器，并在 turn 边界（提交=起点 T₁、停止=收尾）上报事件。UserPromptSubmit 在 speedCard 开启时注入一行 Gen UI 速度卡引用提醒，并携带 speedBadge 开关（开启时即时拉起/补拉徽章）；SessionStart 在 speedBadge 开启时拉起置顶徽章。其余 hook 仅返回空结果。",
   "hooks": {
     "SessionStart": [
       {
-        "matcher": "startup|clear|compact",
+        "matcher": "startup|resume|clear|compact",
         "hooks": [
           {
             "type": "process",
@@ -25,7 +25,12 @@
           {
             "type": "process",
             "command": "node",
-            "args": ["${ZCODE_PLUGIN_ROOT}/hooks/ensure.mjs", "user_prompt_submit", "${user_config.speedCard}"],
+            "args": [
+              "${ZCODE_PLUGIN_ROOT}/hooks/ensure.mjs",
+              "user_prompt_submit",
+              "${user_config.speedCard}",
+              "${user_config.speedBadge}"
+            ],
             "timeoutMs": 1500,
             "enabled": true
           }

@@ -28,12 +28,16 @@ function ownVersion() {
 const OWN_VERSION = ownVersion();
 
 const kind = process.argv[2] || "user_prompt_submit";
-// 第三个参数按事件类型不同（hooks.json 模板替换）：
-// · user_prompt_submit → ${user_config.speedCard}：第一版 Gen UI 速度卡开关（默认开：缺省/空串视为 true）
-// · session_start      → ${user_config.speedBadge}：第二版置顶徽章开关（默认关：缺省/空串视为 false）
+// 开关参数按事件类型不同（hooks.json 模板替换）：
+// · user_prompt_submit → argv[3] ${user_config.speedCard} 速度卡（默认开：缺省/空串视为 true）
+//                        argv[4] ${user_config.speedBadge} 徽章（默认关：缺省/空串视为 false）
+//   徽章开关随每条消息上报：会话中途打开开关立即生效，收集器接管/徽章退出后下一条消息自动补拉
+// · session_start      → argv[3] ${user_config.speedBadge} 置顶徽章开关（默认关：缺省/空串视为 false）
 const cardArg = process.argv[3];
+const badgeArg = process.argv[4];
 const speedCard = kind === "user_prompt_submit" ? (cardArg || "true") === "true" : false;
-const speedBadge = kind === "session_start" ? cardArg === "true" : undefined;
+const speedBadge =
+  kind === "session_start" ? cardArg === "true" : kind === "user_prompt_submit" ? badgeArg === "true" : undefined;
 // stdout 输出（默认 "{}"；UserPromptSubmit 且 speedCard 开启时替换为单行提醒）
 let outJson = "{}";
 

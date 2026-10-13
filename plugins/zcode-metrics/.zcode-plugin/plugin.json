@@ -1,7 +1,7 @@
 {
   "name": "zcode-metrics",
-  "version": "0.13.0",
-  "description": "应用内 token 速度显示：第一版 = 回复内嵌 Gen UI 速度卡（每回合快照 + 近 24 次响应柱状图，默认开）；第二版 = 置顶悬浮徽章（输入框右下角实时速度，默认关）。v0.13.0 移除网页仪表盘；保留多会话并行统计、动态校准估算、7 天历史与零依赖收集器（Hook 保活 + rollout 日志精确统计）",
+  "version": "0.13.1",
+  "description": "应用内 token 速度显示，两个独立开关：回复内嵌速度卡（每回合快照，大数字为上一回合平均 tok/s，柱状图逐次标注每次响应速度）与置顶悬浮速度徽章（窗口右下角实时读数，仅 macOS）。多会话并行统计、动态校准估算、7 天历史，零依赖收集器（Hook 保活 + rollout 日志精确统计）",
   "author": { "name": "wangjin" },
   "license": "MIT",
   "keywords": ["token", "metrics", "speed", "monitor", "gen-ui", "badge"],
@@ -9,15 +9,15 @@
   "userConfig": {
     "speedCard": {
       "type": "boolean",
-      "title": "速度卡 · 回复内嵌（第一版，默认开）",
-      "description": "每回合在回复末尾内联显示本会话 token 速度卡（最近回合速度 + 近 24 次响应柱状图 + 今日输出）。开启时每回合向模型注入一行引用提醒；关闭后不注入任何上下文。",
+      "title": "速度卡（回复内嵌）",
+      "description": "每回合在回复末尾内联显示本会话 token 速度卡：大数字为上一回合平均速度，柱状图展示近 24 次响应、每根柱子直接标注速度值，另附今日输出。开启时每回合向模型注入一行引用提醒；关闭后不注入任何上下文。",
       "default": true,
       "required": false
     },
     "speedBadge": {
       "type": "boolean",
-      "title": "速度徽章 · 置顶悬浮（第二版，默认关）",
-      "description": "会话启动时在 ZCode 窗口右下角弹出置顶微型速度徽章（仅速度读数，自动跟随最近活跃会话，可拖动、双击退出）。仅 macOS。",
+      "title": "速度徽章（置顶悬浮，仅 macOS）",
+      "description": "在 ZCode 窗口右下角显示置顶微型速度徽章（仅速度读数，自动跟随最近活跃会话，0.5s 跟随窗口移动/缩放，可拖动、双击退出）。开启后当前会话的下一条消息或任一新会话即弹出；徽章中途退出会自动补拉。回合内逐秒实时速度用它；回合结束后的汇总用速度卡。仅 macOS。",
       "default": false,
       "required": false
     }
