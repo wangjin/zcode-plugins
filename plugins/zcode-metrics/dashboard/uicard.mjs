@@ -3,13 +3,14 @@
 // 数据全部内联；不用任何脚本（静态快照卡，规避脚本运行时差异）。
 // 注意：TIERS 档色表与 badge/badge.swift 的 tiers 表必须保持一致（test/uicard.test.mjs 跨语言校验）。
 
+// 档色为亮度阶梯：越慢越深、越快越亮（慢深快浅，2026-10-13 用户需求，替换旧红绿灯语义色）
 export const TIERS = [
-  { min: 0, color: "#4E9C78" }, // 0–40    绿
-  { min: 40, color: "#A9C548" }, // 40–80   黄绿
-  { min: 80, color: "#E5C558" }, // 80–160  黄
-  { min: 160, color: "#F2A64B" }, // 160–240 橙
-  { min: 240, color: "#E06C5F" }, // 240–320 红
-  { min: 320, color: "#E05FB0" }, // 320+    品红
+  { min: 0, color: "#4A7A9A" }, // 0–40    深钢蓝
+  { min: 40, color: "#6FA3C6" }, // 40–80  中钢蓝
+  { min: 80, color: "#96C4E0" }, // 80–160 浅钢蓝
+  { min: 160, color: "#B8DBEE" }, // 160–240 淡蓝
+  { min: 240, color: "#DCEEF8" }, // 240–320 冰蓝近白
+  { min: 320, color: "#FFFFFF" }, // 320+    纯白（最快）
 ];
 
 export function tierOf(v) {

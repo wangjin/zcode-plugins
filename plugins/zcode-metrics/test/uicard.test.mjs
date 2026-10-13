@@ -63,7 +63,7 @@ test("大数字走 closed（上一回合）口径并按档色着色；柱数 = m
   });
   assert.ok(out.includes("上一回合"), "closed 存在时用上一回合口径");
   assert.ok(out.includes(">34.2<"), "大数字为 closed.avgTokPerSec");
-  assert.ok(out.includes(TIERS[0].color), "34.2 tok/s 应落第 1 档绿");
+  assert.ok(out.includes(TIERS[0].color), "34.2 tok/s 应落第 1 档（最深档）");
   assert.equal((out.match(/<rect /g) || []).length, 24, "柱数封顶 24");
   assert.ok(out.includes("今日输出"), "有今日输出块");
 });
@@ -100,7 +100,7 @@ test("closed 缺失时回退：生成中用 turn 口径，否则用 last；无�
     records: [rec(210)],
     today: null,
   });
-  assert.ok(lastOnly.includes("最近一次响应") && lastOnly.includes(TIERS[3].color), "210 tok/s 落第 4 档橙");
+  assert.ok(lastOnly.includes("最近一次响应") && lastOnly.includes(TIERS[3].color), "210 tok/s 落第 4 档");
 
   const empty = renderSpeedCard({ session: session({ closed: null, last: null }), records: [], today: null });
   assert.ok(empty.includes("等待本会话第一条模型响应"));
