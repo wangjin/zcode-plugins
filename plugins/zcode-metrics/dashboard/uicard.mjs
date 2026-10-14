@@ -1,22 +1,39 @@
 // zcode-metrics · Gen UI 速度卡渲染器（纯函数，无 IO，可单测）
 // 产物是 ZCode 会话内联 HTML 片段（::visualize 引用渲染）：无 fetch/XHR/WebSocket（沙箱 CSP 禁止），
 // 数据全部内联；不用任何脚本（静态快照卡，规避脚本运行时差异）。
-// 注意：TIERS 档色表与 badge/badge.swift 的 tiers 表必须保持一致（test/uicard.test.mjs 跨语言校验）。
+// 注意：TIER_COLORS 档色表与 badge/badge.swift 的 tierColors 必须保持一致（test/uicard.test.mjs 跨语言校验）。
 
-// 档色为暖色亮度阶梯：慢深快浅，色系红→橙→黄→绿（2026-10-13 用户两轮指定，替换旧红绿灯语义色）
+// 档色为暖色亮度阶梯：慢深快浅，色系红→橙→黄→绿（2026-10-13 用户两轮指定，替换旧红绿灯语义色）。
+// TIERS 的 min 是"绝对阶梯"兜底边界（读数不足时用）；常态档界走 deriveTierBounds 动态推导。
 export const TIERS = [
-  { min: 0, color: "#C13A2E" }, // 0–40    深砖红（最慢、最深）
-  { min: 40, color: "#E05F35" }, // 40–80  朱红
-  { min: 80, color: "#F08A3E" }, // 80–160 橙
-  { min: 160, color: "#F2B24E" }, // 160–240 琥珀
-  { min: 240, color: "#F3D96B" }, // 240–320 黄
-  { min: 320, color: "#B4E3A0" }, // 320+   浅绿（最快、最亮）
+  { min: 0, color: "#C13A2E" }, // 最慢、最深
+  { min: 40, color: "#E05F35" },
+  { min: 80, color: "#F08A3E" },
+  { min: 160, color: "#F2B24E" },
+  { min: 240, color: "#F3D96B" },
+  { min: 320, color: "#B4E3A0" }, // 最快、最亮
 ];
+export const TIER_COLORS = TIERS.map((t) => t.color);
 
-export function tierOf(v) {
+/** 动态分档边界（v0.14.0）：取本会话最近读数的 min→max 线性六等分——慢→快均匀铺满六个色档，
+ *  不再限定绝对速度范围（旧绝对阶梯把 40 tok/s 以下的实际速度全挤进最深一档，色彩失去区分度）。
+ *  读数 < 2 个或全部相同（区间退化，无相对差异可显示）→ 回退绝对阶梯（TIERS 的 min）。 */
+export function deriveTierBounds(values) {
+  const vs = [...(values || [])].filter((v) => Number.isFinite(v) && v > 0);
+  if (vs.length < 2) return TIERS.map((t) => t.min);
+  let lo = Infinity, hi = -Infinity;
+  for (const v of vs) { if (v < lo) lo = v; if (v > hi) hi = v; }
+  if (!(hi > lo)) return TIERS.map((t) => t.min);
+  const bounds = [0];
+  for (let k = 1; k <= 5; k++) bounds.push(lo + ((hi - lo) * k) / 6);
+  return bounds;
+}
+
+/** 按边界取档（含下界不含上界）；bounds 缺省 = 绝对阶梯（旧行为兼容）。 */
+export function tierOf(v, bounds = TIERS.map((t) => t.min)) {
   let i = 0;
-  for (let k = 0; k < TIERS.length; k++) if (Number(v) >= TIERS[k].min) i = k;
-  return { i, color: TIERS[i].color };
+  for (let k = 0; k < bounds.length; k++) if (Number(v) >= bounds[k]) i = k;
+  return { i, color: TIER_COLORS[Math.min(i, TIER_COLORS.length - 1)] };
 }
 
 const fmt1 = (n) => (Number.isFinite(n) ? (n >= 100 ? Math.round(n) : n.toFixed(1)) : "—");
@@ -28,11 +45,11 @@ const SPARK_MAX = 24; // 柱数上限（近 24 次模型响应）
 const LABEL_ALL_MAX = 10; // 柱数 ≤ 此值时每柱都标数值；更多时只标最新柱 + 最高柱
 
 /** 近 SPARK_MAX 条 main 记录 → 柱状 sparkline（旧→新，右端为最新）。
- *  每柱 fill 用该次速度的档色；柱顶直接标注速度值（≤LABEL_ALL_MAX 柱全标，否则只标最新 + 最高；
- *  文案是 HTML 覆盖层而非 SVG text：svg preserveAspectRatio=none 横向拉伸会把 text 字形拉变形）。
- *  悬停 title 仍给出完整明细。records 为升序。 */
-function sparkline(records) {
-  const rs = records.filter((r) => r.role === "main").slice(-SPARK_MAX);
+ *  每柱 fill 用该次速度的档色（动态边界 bounds，与卡片大数字同界）；柱顶直接标注速度值
+ *  （≤LABEL_ALL_MAX 柱全标，否则只标最新 + 最高；文案是 HTML 覆盖层而非 SVG text：
+ *  svg preserveAspectRatio=none 横向拉伸会把 text 字形拉变形）。悬停 title 仍给出完整明细。
+ *  rs 为已滤 main、截取 SPARK_MAX、升序。 */
+function sparkline(rs, bounds) {
   if (!rs.length) return "";
   const W = 240, H = 44, GAP = 2, BONUS = 4; // BONUS = 最新一柱右侧留白
   const bw = (W - BONUS - GAP * (rs.length - 1)) / rs.length;
@@ -45,7 +62,7 @@ function sparkline(records) {
     const h = Math.max(2, (r.tokPerSec / max) * (H - 2));
     const x = i * (bw + GAP);
     const newest = i === rs.length - 1;
-    bars += `<rect x="${x.toFixed(1)}" y="${(H - h).toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" rx="1" fill="${tierOf(r.tokPerSec).color}" opacity="${newest ? 1 : 0.75}"><title>${esc(fmt1(r.tokPerSec) + " tok/s · " + wan(r.outputTokens) + " tok · " + (r.modelId || "?"))}</title></rect>`;
+    bars += `<rect x="${x.toFixed(1)}" y="${(H - h).toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" rx="1" fill="${tierOf(r.tokPerSec, bounds).color}" opacity="${newest ? 1 : 0.75}"><title>${esc(fmt1(r.tokPerSec) + " tok/s · " + wan(r.outputTokens) + " tok · " + (r.modelId || "?"))}</title></rect>`;
     if (rs.length <= LABEL_ALL_MAX || labelSet.has(i)) {
       const cx = ((x + bw / 2) / W) * 100;
       labels += `<span class="tsd-sc-bl${newest ? " tsd-sc-bl-new" : ""}" style="left:${cx.toFixed(1)}%;bottom:${(h + 3).toFixed(1)}px">${esc(fmt1(r.tokPerSec))}</span>`;
@@ -89,10 +106,12 @@ function hero(session) {
 export function renderSpeedCard({ session, records = [], today = null }) {
   if (!session || !session.sessionId) return "";
   const h = hero(session);
-  const spark = sparkline(records);
   const mains = records.filter((r) => r.role === "main");
   const last24 = mains.slice(-SPARK_MAX);
-  const tier = tierOf(h.v ?? 0);
+  // 动态分档：边界取柱图可见集（近 24 次）的 min→max，大数字与柱色同界（会话内慢深快浅）
+  const bounds = deriveTierBounds(last24.map((r) => r.tokPerSec));
+  const spark = sparkline(last24, bounds);
+  const tier = tierOf(h.v ?? 0, bounds);
   const todayOut = today && Number.isFinite(today.tokens?.output) ? wan(today.tokens.output) : null;
   const scope = last24.length
     ? `近 ${last24.length} 次响应 ${fmt1(Math.min(...last24.map((r) => r.tokPerSec)))}–${fmt1(Math.max(...last24.map((r) => r.tokPerSec)))} tok/s`

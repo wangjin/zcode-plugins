@@ -1,5 +1,6 @@
 // zcode-metrics · 内存状态机（多会话分桶，纯函数式，无 IO，可单测）
 // 会话桶仅由 hook 事件创建（session_start/user_prompt_submit）；rollout 记录只路由不建桶（防启动回放复活旧会话）。
+import { deriveTierBounds } from "./uicard.mjs";
 
 export const DEFAULTS = {
   HISTORY_CAP: 20,
@@ -39,6 +40,7 @@ function newSession(sid, now) {
     turnAgg: { totalOutputTokens: 0, requestCount: 0, avgTokPerSec: null },
     closed: null, // 本轮收尾快照 {sessionId,tokens,requests,avgTokPerSec,durationSec,estimated}
     last: null,   // 该会话最近一次 main 完成记录（hero 用）
+    last24: [],   // 本会话近 24 次 main 的 tokPerSec（动态分档边界依据，随 /api/state 下发）
   };
 }
 
@@ -150,6 +152,10 @@ export function applyRecord(s, r, now = Date.now()) {
   if (!sess) return s;
   sess.last = r;
   sess.lastEventMs = now;
+  if (r.role === "main") {
+    sess.last24.push(r.tokPerSec); // 近 24 次 main 速度维护（动态分档依据）；lite 不进此序列
+    if (sess.last24.length > 24) sess.last24.shift();
+  }
   if (sess.turn.active) {
     sess.turnAgg.totalOutputTokens += r.outputTokens;
     sess.turnAgg.requestCount += 1;
@@ -232,7 +238,8 @@ function sessionView(sess, now) {
 /** 给 UI/SSE 的完整快照（含实时派生字段 + 7 天历史聚合视图）。
  *  顶层不再有 turn/closed/last/sessionId/stale（被 sessions[] 取代）；generating = 任一会话 active。
  *  store（可选）为 store.mjs 的 createStore 实例：传入时全局附带 trend/models/cache/today/store 五块，
- *  且每个会话项附带该 sid 过滤的 trend/models/cache/today 四块；缺省时聚合字段省略（兼容单测）。 */
+ *  且每个会话项附带该 sid 过滤的 trend/models/cache/today 四块；缺省时聚合字段省略（兼容单测）。
+ *  v0.14.0：每会话附带 tierBounds + last24（动态分档：徽章按界着色，与卡片同界）。 */
 export function snapshot(s, now = Date.now(), store = null) {
   // 按"最近用户交互"排序：sessions[0] = 当前会话（徽章跟随它）。
   // 后台会话的记录到达只刷新 lastEventMs（用于淘汰/保活），不改变当前会话归属。
@@ -242,6 +249,9 @@ export function snapshot(s, now = Date.now(), store = null) {
   const hasStore = !!(store && typeof store.view === "function");
   const sessions = list.map((sess) => {
     const item = sessionView(sess, now);
+    // 动态分档（v0.14.0）：界与依据序列随会话项下发（徽章按界着色，与卡片同界）
+    item.tierBounds = deriveTierBounds(sess.last24);
+    item.last24 = sess.last24;
     if (hasStore) {
       const v = store.view(now, { sessionId: sess.sessionId });
       item.trend = v.trend;

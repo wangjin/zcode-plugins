@@ -9,14 +9,17 @@ import AppKit
 
 // MARK: - 六档配色（与 dashboard/uicard.mjs TIERS 单源对齐，改动须两边同步）
 // 档色为暖色亮度阶梯：慢深快浅，色系红→橙→黄→绿（2026-10-13 用户两轮指定，替换旧红绿灯语义色）
-let tiers: [(min: Double, color: NSColor)] = [
-  (0,   NSColor(hex: 0xC13A2E)), (40,  NSColor(hex: 0xE05F35)), (80,  NSColor(hex: 0xF08A3E)),
-  (160, NSColor(hex: 0xF2B24E)), (240, NSColor(hex: 0xF3D96B)), (320, NSColor(hex: 0xB4E3A0)),
+// 分档边界动态（v0.14.0）：默认绝对阶梯兜底；/api/state sessions[0].tierBounds 有值时随界着色（与卡片同界）
+let tierColors: [NSColor] = [
+  NSColor(hex: 0xC13A2E), NSColor(hex: 0xE05F35), NSColor(hex: 0xF08A3E),
+  NSColor(hex: 0xF2B24E), NSColor(hex: 0xF3D96B), NSColor(hex: 0xB4E3A0),
 ]
+let defaultBounds: [Double] = [0, 40, 80, 160, 240, 320]
+var currentBounds: [Double] = defaultBounds
 func tierColor(_ v: Double) -> NSColor {
-  var c = tiers[0].color
-  for t in tiers where v >= t.min { c = t.color }
-  return c
+  var i = 0
+  for k in 0..<currentBounds.count where v >= currentBounds[k] { i = k }
+  return tierColors[min(i, tierColors.count - 1)]
 }
 
 extension NSColor {
@@ -31,16 +34,19 @@ struct SessionView {
   let generating: Bool
   let turnAvg: Double?; let turnElapsedMs: Double
   let closedAvg: Double?; let lastTokPerSec: Double?
-  static func parse(_ s: [String: Any]) -> SessionView {
-    let turn = s["turn"] as? [String: Any] ?? [:]
-    let closed = s["closed"] as? [String: Any] ?? [:]
-    let last = s["last"] as? [String: Any] ?? [:]
-    func num(_ o: Any?) -> Double? { if let n = o as? Double, n.isFinite, n > 0 { return n }; return nil }
-    return SessionView(generating: (s["generating"] as? Bool) ?? false,
-                       turnAvg: num(turn["avgTokPerSec"]),
-                       turnElapsedMs: num(turn["elapsedMs"]) ?? 0,
-                       closedAvg: num(closed["avgTokPerSec"]),
-                       lastTokPerSec: num(last["tokPerSec"]))
+  let tierBounds: [Double]?
+  static func parse(_ s: [String: Any]) -> SessionView? {
+    guard let turn = s["turn"] as? [String: Any] ?? [:] as? [String: Any],
+          let closed = s["closed"] as? [String: Any] ?? [:] as? [String: Any],
+          let last = s["last"] as? [String: Any] ?? [:] as? [String: Any] else { return nil }
+      func num(_ o: Any?) -> Double? { if let n = o as? Double, n.isFinite, n > 0 { return n }; return nil }
+      let bounds = (s["tierBounds"] as? [Double] ?? nil as [Double]?)
+      return SessionView(generating: (s["generating"] as? Bool) ?? false,
+                         turnAvg: num(turn["avgTokPerSec"]),
+                         turnElapsedMs: num(turn["elapsedMs"]) ?? 0,
+                         closedAvg: num(closed["avgTokPerSec"]),
+                         lastTokPerSec: num(last["tokPerSec"]),
+                         tierBounds: bounds)
   }
 }
 
@@ -214,10 +220,11 @@ final class Badge: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // 当前会话（sessions[0] = 最近用户交互的会话）；大数字口径与 UI 卡 hero 一致：生成中本轮 → 上一回合 → 最近响应
     let v: Double?
     let generating: Bool
-    if let s = sessions.first {
-      let sv = SessionView.parse(s)
+    if let s = sessions.first, let sv = SessionView.parse(s) {
       generating = sv.generating
       v = (sv.generating ? sv.turnAvg : nil) ?? sv.closedAvg ?? sv.lastTokPerSec
+      // 动态分档（v0.14.0）：收集器随 /api/state 下发当前会话的档界（6 个含 0 的升序数），与卡片同界
+      if let b = sv.tierBounds, b.count == tierColors.count, b.first == 0 { currentBounds = b }
     } else {
       generating = false
       v = nil // 无会话桶：等 hook 事件建桶

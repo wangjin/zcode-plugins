@@ -1,29 +1,29 @@
-// Gen UI 速度卡单测：TIERS 与 badge.swift 跨语言一致、片段契约（无脚本/无 fetch/根 id/柱数/档色）
+// Gen UI 速度卡单测：TIER_COLORS 与 badge.swift 跨语言一致、片段契约（无脚本/无 fetch/根 id/柱数/档色）
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { TIERS, tierOf, renderSpeedCard } from "../dashboard/uicard.mjs";
+import { TIERS, TIER_COLORS, tierOf, deriveTierBounds, renderSpeedCard } from "../dashboard/uicard.mjs";
 
 const swift = readFileSync(
   path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "badge", "badge.swift"),
   "utf8",
 );
 
-test("TIERS 与 badge.swift 的档色表一致（JS/Swift 双端单源，防漂移）", () => {
-  const m = swift.match(/let tiers: \[\(min: Double, color: NSColor\)\] = \[([\s\S]*?)\]/);
-  assert.ok(m, "badge.swift 缺 tiers 表");
-  const pairs = [...m[1].matchAll(/\((\d+),\s*NSColor\(hex: 0x([0-9A-Fa-f]{6})\)\)/g)];
-  assert.equal(pairs.length, TIERS.length, "badge.swift 与 uicard.mjs 档数一致");
-  pairs.forEach((p, i) => {
-    assert.equal(Number(p[1]), TIERS[i].min, `第 ${i} 档 min 一致`);
-    assert.equal("#" + p[2].toUpperCase(), TIERS[i].color.toUpperCase(), `第 ${i} 档色值一致`);
-  });
+test("TIER_COLORS 与 badge.swift 的档色表一致（JS/Swift 双端单源，防漂移）", () => {
+  const m = swift.match(/let tierColors: \[NSColor\] = \[([\s\S]*?)\]/);
+  assert.ok(m, "badge.swift 缺 tierColors 表");
+  const hexes = [...m[1].matchAll(/NSColor\(hex: 0x([0-9A-Fa-f]{6})\)/g)].map((x) => "#" + x[1]);
+  assert.equal(hexes.length, TIER_COLORS.length, "badge.swift 与 uicard.mjs 档数一致");
+  hexes.forEach((h, i) => assert.equal(h.toUpperCase(), TIER_COLORS[i].toUpperCase(), `第 ${i} 档色值一致`));
+  const b = swift.match(/let defaultBounds: \[Double\] = \[([\d, ]+)\]/);
+  assert.ok(b, "badge.swift 缺 defaultBounds 兜底阶梯");
+  assert.deepEqual(b[1].split(",").map(Number), TIERS.map((t) => t.min), "兜底阶梯与 TIERS min 一致");
 });
 
-test("tierOf 档位边界（含下界不含上界）", () => {
-  assert.equal(tierOf(0).color, TIERS[0].color);
+test("tierOf 档位边界（含下界不含上界，绝对阶梯兜底口径）", () => {
+  assert.equal(tierOf(0).color, TIER_COLORS[0]);
   assert.equal(tierOf(39.9).i, 0);
   assert.equal(tierOf(40).i, 1);
   assert.equal(tierOf(320).i, 5);
@@ -51,6 +51,21 @@ test("renderSpeedCard 片段契约：根 id / 无脚本 / 无网络调用 / 非�
   assert.ok(out.includes("Token 速度"), "缺标题");
 });
 
+test("动态分档：实际速度区间（8–12 tok/s）也铺满六个色档；大数字与柱色同界；无读数回退绝对阶梯", () => {
+  const records = [rec(8), rec(9), rec(10), rec(11), rec(12)]; // 慢区间
+  const out = renderSpeedCard({ session: session({ closed: { tokens: 500, requests: 5, durationSec: 60, avgTokPerSec: 10, estimated: false } }), records, today: null });
+  const b = deriveTierBounds([8, 9, 10, 11, 12]);
+  // 8→最深档 0；9→档 1；10=中点恰在界上→档 3；11→档 4；12→最亮档 5（慢区间也有完整快慢色差）
+  assert.equal(tierOf(10, b).i, 3);
+  assert.ok(out.includes(TIER_COLORS[0]), "柱 1（最慢）用最深档");
+  assert.ok(out.includes(TIER_COLORS[1]) && out.includes(TIER_COLORS[4]), "档 1/4 均有柱落位");
+  assert.ok(out.includes(TIER_COLORS[5]), "柱 5（最新 12 tok/s）用最亮档");
+  assert.ok(out.includes(TIER_COLORS[3]), "大数字 10 tok/s 与柱色同界（档 3）");
+  // 空会话：等待文案 + 无柱，不报错
+  const empty = renderSpeedCard({ session: session({ closed: null, last: null }), records: [], today: null });
+  assert.ok(empty.includes("等待本会话第一条模型响应"));
+});
+
 test("大数字走 closed（上一回合）口径并按档色着色；柱数 = main 记录数（lite 过滤、封顶 24）", () => {
   const records = [
     rec(30, { role: "lite" }), // lite 过滤出柱图
@@ -63,7 +78,7 @@ test("大数字走 closed（上一回合）口径并按档色着色；柱数 = m
   });
   assert.ok(out.includes("上一回合"), "closed 存在时用上一回合口径");
   assert.ok(out.includes(">34.2<"), "大数字为 closed.avgTokPerSec");
-  assert.ok(out.includes(TIERS[0].color), "34.2 tok/s 应落第 1 档（深砖红）");
+  assert.ok(out.includes(TIER_COLORS[0]), "34.2 tok/s 应落第 1 档（深砖红）");
   assert.equal((out.match(/<rect /g) || []).length, 24, "柱数封顶 24");
   assert.ok(out.includes("今日输出"), "有今日输出块");
 });
@@ -100,7 +115,7 @@ test("closed 缺失时回退：生成中用 turn 口径，否则用 last；无�
     records: [rec(210)],
     today: null,
   });
-  assert.ok(lastOnly.includes("最近一次响应") && lastOnly.includes(TIERS[3].color), "210 tok/s 落第 4 档");
+  assert.ok(lastOnly.includes("最近一次响应") && lastOnly.includes(TIER_COLORS[3]), "210 tok/s 落第 4 档");
 
   const empty = renderSpeedCard({ session: session({ closed: null, last: null }), records: [], today: null });
   assert.ok(empty.includes("等待本会话第一条模型响应"));
