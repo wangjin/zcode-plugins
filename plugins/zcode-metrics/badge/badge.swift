@@ -8,10 +8,10 @@
 import AppKit
 
 // MARK: - 六档配色（与 dashboard/uicard.mjs TIERS 单源对齐，改动须两边同步）
-// 档色为亮度阶梯：越慢越深、越快越亮（慢深快浅，2026-10-13 用户需求，替换旧红绿灯语义色）
+// 档色为暖色亮度阶梯：慢深快浅，色系红→橙→黄→绿（2026-10-13 用户两轮指定，替换旧红绿灯语义色）
 let tiers: [(min: Double, color: NSColor)] = [
-  (0,   NSColor(hex: 0x4A7A9A)), (40,  NSColor(hex: 0x6FA3C6)), (80,  NSColor(hex: 0x96C4E0)),
-  (160, NSColor(hex: 0xB8DBEE)), (240, NSColor(hex: 0xDCEEF8)), (320, NSColor(hex: 0xFFFFFF)),
+  (0,   NSColor(hex: 0xC13A2E)), (40,  NSColor(hex: 0xE05F35)), (80,  NSColor(hex: 0xF08A3E)),
+  (160, NSColor(hex: 0xF2B24E)), (240, NSColor(hex: 0xF3D96B)), (320, NSColor(hex: 0xB4E3A0)),
 ]
 func tierColor(_ v: Double) -> NSColor {
   var c = tiers[0].color

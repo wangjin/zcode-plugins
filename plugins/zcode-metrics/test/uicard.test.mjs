@@ -63,7 +63,7 @@ test("大数字走 closed（上一回合）口径并按档色着色；柱数 = m
   });
   assert.ok(out.includes("上一回合"), "closed 存在时用上一回合口径");
   assert.ok(out.includes(">34.2<"), "大数字为 closed.avgTokPerSec");
-  assert.ok(out.includes(TIERS[0].color), "34.2 tok/s 应落第 1 档（最深档）");
+  assert.ok(out.includes(TIERS[0].color), "34.2 tok/s 应落第 1 档（深砖红）");
   assert.equal((out.match(/<rect /g) || []).length, 24, "柱数封顶 24");
   assert.ok(out.includes("今日输出"), "有今日输出块");
 });
