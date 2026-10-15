@@ -3,6 +3,7 @@
 ZCode 插件：**应用内**显示各会话的模型输出速度（tok/s）。零依赖 Node 收集器（仅监听 `127.0.0.1`）tail `~/.zcode/cli/rollout/model-io-*.jsonl`（ZCode 内部模型 IO 日志），取每次请求的精确 `usage.outputTokens ÷ durationMs` 计算速度；7 天历史持久化 + 动态校准估算。
 
 > v0.13.0：网页仪表盘（index/mini/SSE/自动打开浏览器）已按需求移除，只保留应用内展示；HTTP 仅剩 `/api/state` `/health` `/shutdown` `/internal/event` 内部端点。
+> v0.15.0：**新增客户端注入式用量状态条**（`statusbar`，默认关）——参考 ByteRax/zcode-token-usage-statusbar 复刻：`overlay/` 四件（overlay.js 渲染端 / inject-main.cjs 主进程泵 / query.py SQL 查询器 / install/patch_install.py asar 安装器），条钉在输入框正下方，七个显示项 ⚙ 逐项开关；数据直读 `~/.zcode/cli/db/db.sqlite`（只读），不依赖收集器；安装走原子替换 + 注入行正则剥离（假 asar 全链路冒烟 + query.py 口径单测）。与速度卡/徽章互不影响。
 > v0.13.1：速度卡柱状图柱顶直接标注速度值（不再依赖悬停）；大数字口径说明写明"平均"；配置文案按功能命名；修徽章三个失效场景——会话中途打开开关不生效（现在每条消息都携带开关，即时拉起）、恢复会话不触发（SessionStart matcher 补 resume）、收集器接管后徽章消失不补拉（改为徽章不在即补拉）；徽章文字垂直居中、0.5s 跟随 ZCode 窗口移动、自管 badge.pid 防重复弹；徽章跟随"当前会话"（最近用户交互，后台会话生成不抢占）。
 > v0.14.0：**速度分档动态化**——旧绝对阶梯（40/80/160/240/320 固定边界）把低速模型（实际 8–20 tok/s）全部挤进最深一档，色彩失去区分度；现在档界取**本会话近 24 次响应速度的 min→max 六等分**（`dashboard/uicard.mjs` 的 `deriveTierBounds`），慢→快均匀铺满六个色档，不再限定任何绝对速度范围。卡片大数字、柱状图与置顶徽章三处同界：徽章经 `/api/state` 逐会话下发 `tierBounds`（`badge/badge.swift` 改为按界着色）。读数不足 2 个或区间退化时回退原绝对阶梯。色表仍为暖色红→橙→黄→绿阶梯（慢深快浅）。
 > v0.13.5：速度档色换暖色系——按用户指定改为红→橙→黄→绿的暖色亮度阶梯（慢深快浅：0–40 深砖红 → 320+ 浅绿）；卡片与徽章源码、二进制三处同步。
@@ -16,6 +17,7 @@ ZCode 插件：**应用内**显示各会话的模型输出速度（tok/s）。�
 |---|---|---|---|
 | 速度卡 | `speedCard` | 回复末尾内嵌 Gen UI 卡片：上一回合平均 tok/s（六档配色大数字，档界随本会话速度动态推导）+ 近 24 次响应柱状图（柱顶标速度值）+ 今日输出 | 开 |
 | 速度徽章 | `speedBadge` | 置顶悬浮窗：ZCode 窗口输入框右下角，仅速度读数，1s 刷新 | 关 |
+| 用量状态条 | `statusbar`（仅说明，实际以 asar 注入为准） | **注入客户端**：输入框正下方胶囊条（速度/上下文/本轮/会话/工具/今日/子代理），需执行安装脚本 | 关 |
 
 ### 速度卡 · 回复内嵌（speedCard，默认开）
 
@@ -33,6 +35,19 @@ ZCode 插件：**应用内**显示各会话的模型输出速度（tok/s）。�
 - 定位与跟随：初始位置优先恢复用户拖过的位置，否则取 ZCode 前台窗口右下角内侧（osascript 查询，失败落主屏右下角）；运行中每 0.5s 经 CGWindowList 跟随 ZCode 窗口移动/缩放（按右下角增量平移，bounds/owner 为公开信息，无需辅助功能权限）。徽章自管 `badge.pid`（启动写入/退出删除），收集器凭它避免重复弹、并在徽章不在时补拉。
 - 口径：每秒轮询 `/api/state`，跟随**当前会话**（最近一次提交消息或打开的会话；后台其他会话的生成不会抢占徽章。局限：只切换标签查看而不发消息时不会切换，一提交消息即切过去）；读数 = 生成中本轮平均 → 上一回合合计 → 最近一次响应。
 - 触发与自愈：speedBadge 开启时，session_start（startup/resume/clear/compact）与每条用户消息都会尝试拉起徽章（badge.pid 存活即跳过，pid 检查只读一个小文件）；收集器接管重启、徽章双击退出或失联自杀后，下一条消息自动补拉。收集器退出时联动收掉徽章。
+
+### 用量状态条 · 输入框正下方（statusbar，默认关，需注入客户端）
+
+- 形态：`overlay/overlay.js` 注入 ZCode 渲染进程，在输入框视觉卡片正下方悬浮一条玻璃拟态胶囊（rAF 逐帧跟随卡片矩形，宽度锁卡片两缘；超宽分级收缩）。显示项 ⚙ 面板逐项开关：生成速度（最近一段 tok/s 三档色）/ 上下文环形进度（窗口容量自动读客户端模型目录 `zcode-builtin.json`，超限亮红闪烁）/ 本轮（token+命中率+请求数+耗时+首字）/ 会话累计 / 工具调用（错误徽标）/ 今日合计 / 子代理（呼吸灯 + 点击弹明细面板）。深浅主题与等宽字体全量跟随客户端 CSS 变量。
+- 数据：主进程 loader（`overlay/inject-main.cjs`）fs.watch `~/.zcode/cli/db/db.sqlite`（只读）触发式拉取（去抖 300ms、限频 1.5s、30s 心跳兜底，空闲零进程），常驻 Python 查询器 `overlay/query.py` 按 SQL 聚合（model_usage / turn_usage / tool_usage / session 表，口径同参考项目）；会话归属：客户端自带 IPC `zcode:sync-active-task-session` 上报的窗口焦点会话 + 分屏 `data-session-id`，池外会话显示零值绝不串会话。
+- **安装（修改客户端 app.asar，谨慎）**：
+  ```
+  cd plugins/zcode-metrics/overlay/install
+  python3 patch_install.py install    # 复制运行时到 ~/.zcode/zcode-metrics-overlay/ + asar 注入行
+  # 完全退出 ZCode（⌘Q）重开生效；若替换失败，退出后再跑一次 install --finalize
+  ```
+- **卸载**：`python3 patch_install.py remove` + 重启 ZCode。只剥离本工具注入行，不影响官方版本与其它注入工具。
+- **代价（与 speedCard/speedBadge 本质不同）**：直接改客户端文件，ZCode **升级会覆盖注入**，需重跑 install；客户端损坏风险自担（安装器走原子替换 + 注入行正则剥离，实测无损，但属非官方 hack）。参考实现：ByteRax/zcode-token-usage-statusbar（机制移植，口径复刻，命名空间 zcm 避免冲突）。
 
 ## 架构
 

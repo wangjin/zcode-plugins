@@ -1,0 +1,6 @@
+{
+  "context_window": 200000,
+  "activity_min_ms": 1500,
+  "heartbeat_ms": 30000,
+  "resident": true
+}

@@ -1,10 +1,10 @@
 {
   "name": "zcode-metrics",
-  "version": "0.14.0",
-  "description": "应用内 token 速度显示，两个独立开关：回复内嵌速度卡（每回合快照，大数字为上一回合平均 tok/s，柱状图逐次标注每次响应速度）与置顶悬浮速度徽章（窗口右下角实时读数，仅 macOS）。多会话并行统计、动态校准估算、7 天历史，零依赖收集器（Hook 保活 + rollout 日志精确统计）",
+  "version": "0.15.0",
+  "description": "应用内 token 速度显示，两个独立开关：回复内嵌速度卡（每回合快照，大数字为上一回合平均 tok/s，柱状图逐次标注每次响应速度）与置顶悬浮速度徽章（窗口右下角实时读数，仅 macOS）。另含可选的客户端注入式状态条（输入框下方用量胶囊，需执行 overlay/install/patch_install.py 修改客户端 asar，默认关闭）。多会话并行统计、动态校准估算、7 天历史，零依赖收集器（Hook 保活 + rollout 日志精确统计）",
   "author": { "name": "wangjin" },
   "license": "MIT",
-  "keywords": ["token", "metrics", "speed", "monitor", "gen-ui", "badge"],
+  "keywords": ["token", "metrics", "speed", "monitor", "gen-ui", "badge", "statusbar"],
   "skills": "./skills",
   "userConfig": {
     "speedCard": {
@@ -18,6 +18,13 @@
       "type": "boolean",
       "title": "速度徽章（置顶悬浮，仅 macOS）",
       "description": "在 ZCode 窗口右下角显示置顶微型速度徽章（仅速度读数，跟随当前会话——最近提交消息的那个，后台会话生成不抢占；0.5s 跟随窗口移动/缩放，可拖动、双击退出）。开启后当前会话的下一条消息或任一新会话即弹出；徽章中途退出会自动补拉。回合内逐秒实时速度用它；回合结束后的汇总用速度卡。仅 macOS。",
+      "default": false,
+      "required": false
+    },
+    "statusbar": {
+      "type": "boolean",
+      "title": "状态条（输入框下方，需注入客户端）",
+      "description": "在 ZCode 输入框正下方显示 token 用量胶囊条：生成速度、上下文环形进度、本轮/会话累计、工具调用、今日合计、子代理（⚙ 面板逐项开关）。数据只读 ~/.zcode/cli/db/db.sqlite。⚠ 安装方式：执行 overlay/install/patch_install.py install（会修改客户端 app.asar，需完全退出重启 ZCode 生效；客户端升级后需重跑）；卸载 remove。此开关仅作功能说明，安装状态以 asar 实际注入为准。",
       "default": false,
       "required": false
     }
